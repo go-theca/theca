@@ -194,8 +194,16 @@ func TestEverythingLooksRandom(t *testing.T) {
 		for _, v := range f.b[off : off+4096] {
 			seen[v]++
 		}
+		// A byte's count in a random block is Binomial(4096, 1/256), about
+		// Poisson(16). The bound must hold for EVERY cell of the run: about
+		// 256 blocks × 256 values = 65 536 cells. "n > 40" looked far out
+		// (it is 6 standard deviations) but the Poisson tail there is
+		// ~1.3e-7 per cell, so ~0.85 % of runs failed on random data: 8 of
+		// 600 measured, on main and on a branch alike (PR #12's CI). At 55
+		// the tail is ~1.5e-14 per cell, ~1e-9 per run. Plaintext still
+		// trips it: a block of one repeated byte has a count of 4096.
 		for v, n := range seen {
-			if n > 40 { // the mean is 16; 40 is far outside random
+			if n > 55 {
 				t.Fatalf("block at %d: byte %#x occurs %d times", off, v, n)
 			}
 		}
