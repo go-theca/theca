@@ -170,7 +170,7 @@ func TestWrapSlots(t *testing.T) {
 		t.Fatalf("%d %v", len(slot), err)
 	}
 	got, err := OpenWrap(&kek, 3, slot)
-	if err != nil || *got != *ms {
+	if err != nil || !bytes.Equal(got.Bytes(), ms.Bytes()) {
 		t.Fatalf("%v", err)
 	}
 	// Wrong KEK, wrong index (a slot moved to another position), any byte.
