@@ -1,0 +1,115 @@
+name: ci
+
+# No `branches:` filter on pull_request, deliberately. A filtered trigger
+# reports "no checks" forever for any pull request not aimed at main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Copied from the `links` job of go-fleettools/.github (same pinned
+  # linkcheck). The ephemeral read-only github.token reaches the tool as a
+  # 0600 file in RUNNER_TEMP, never as an argument or an environment variable.
+  links:
+    name: every link resolves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check
+        # The token is a step-scoped variable, expanded by the shell, not
+        # spliced into the script text. (Same exception as in
+        # go-fleettools/.github: the job's ephemeral read-only token.)
+        env:
+          GH_LINK_TOKEN: ${{ github.token }}
+        run: |
+          umask 077
+          token="${RUNNER_TEMP}/linkcheck-token"
+          trap 'rm -f "${token}"' EXIT
+          printf '%s' "${GH_LINK_TOKEN}" > "${token}"
+          go run github.com/go-fleettools/fleettools/cmd/linkcheck@v0.88.0 \
+            --token-file "${token}" \
+            README.md docs/DESIGN.md docs/HARDWARE-KEYS.md
+
+  native:
+    name: native (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+
+      - run: go vet ./...
+
+      - name: Test (race, coverage)
+        run: go test -race -coverprofile=cover.out ./...
+
+      - name: Coverage is 100%
+        run: go run ./internal/tools/covgaps cover.out
+
+  # Container size math stays in uint64 (DESIGN 10.4): run the suite on a
+  # 32-bit target too.
+  i386:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+        env:
+          GOARCH: '386'
+          CGO_ENABLED: '0'
+
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {pkg: ./internal/ta1, target: FuzzOpen}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 30s ${{ matrix.pkg }}
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
