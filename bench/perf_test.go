@@ -24,6 +24,7 @@ type fixture struct {
 	seed   [ta1.SeedSize]byte
 	plain  []byte
 	prefix []byte // label(leaf) || cid || u64(idx) || seed: the tag input before C
+	block  cipher.Block
 }
 
 type zeroReader struct{ seed *[ta1.SeedSize]byte }
@@ -61,16 +62,20 @@ func newFixture(t testing.TB) *fixture {
 	return f
 }
 
-// The Go component bodies are the exact code of internal/ta1 (xchacha20,
-// aes256ctr): one cipher built per sector, as Theca does.
+// The Go component bodies are the exact code of internal/ta1's cascade: the
+// XChaCha20 cipher is built per sector (it is keyed by the per-sector
+// nonce); the AES-256 key schedule is built once per key and only the CTR
+// state per sector (go-theca/theca#8).
 func goXChaCha(f *fixture, buf []byte) {
 	c, _ := chacha20.NewUnauthenticatedCipher(f.k.Kc[:], f.seed[:24])
 	c.XORKeyStream(buf, buf)
 }
 
 func goAESCTR(f *fixture, buf []byte) {
-	b, _ := aes.NewCipher(f.k.Ka[:])
-	cipher.NewCTR(b, f.seed[24:]).XORKeyStream(buf, buf)
+	if f.block == nil {
+		f.block, _ = aes.NewCipher(f.k.Ka[:])
+	}
+	cipher.NewCTR(f.block, f.seed[24:]).XORKeyStream(buf, buf)
 }
 
 // Argon2id at profile 1's time and memory (t=3, 64 MiB), one lane: libsodium

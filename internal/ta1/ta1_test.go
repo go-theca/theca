@@ -3,6 +3,7 @@ package ta1
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -24,6 +25,14 @@ func unhex(t testing.TB, s string) []byte {
 }
 
 // ---- independent references, written from the specifications -------------
+
+// aes256ctr is AES-256-CTR built from scratch for one call, as ta1 did per
+// sector before the key schedule was cached (#8): the reference the cached
+// path is compared with.
+func aes256ctr(key *[32]byte, iv *[16]byte, dst, src []byte) {
+	b, _ := aes.NewCipher(key[:])
+	cipher.NewCTR(b, iv[:]).XORKeyStream(dst, src)
+}
 
 // refHMAC is HMAC-SHA-256 from RFC 2104, built on bare SHA-256.
 func refHMAC(key, msg []byte) []byte {
@@ -520,7 +529,7 @@ func TestErrors(t *testing.T) {
 func TestKeysBytes(t *testing.T) {
 	k := testKeys(t)
 	k2, err := FromBytes(k.Bytes())
-	if err != nil || *k2 != *k {
+	if err != nil || k2.Kc != k.Kc || k2.Ka != k.Ka || k2.Km != k.Km {
 		t.Fatal(err)
 	}
 	if _, err := FromBytes(make([]byte, 95)); err == nil {

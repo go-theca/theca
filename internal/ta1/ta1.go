@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync"
 
 	"golang.org/x/crypto/chacha20"
 )
@@ -64,6 +65,46 @@ type Keys struct {
 	Kc [KeySize]byte // XChaCha20
 	Ka [KeySize]byte // AES-256-CTR
 	Km [KeySize]byte // HMAC-SHA-256
+
+	c *cache // keyed state built once, not per sector (go-theca/theca#8, #9)
+}
+
+// cache holds the AES key schedule and the keyed HMAC state, so a sector
+// does not pay a key expansion and two pad compressions. It records the keys
+// it was built from and is rebuilt when they differ: Keys is a value type,
+// and a copy whose key is then changed shares the pointer.
+//
+// The expanded AES schedule and the HMAC pads live inside crypto/aes and
+// crypto/hmac and cannot be wiped; Zeroize drops them for the GC. Before this
+// cache, every sector left one more such copy behind.
+type cache struct {
+	mu    sync.Mutex
+	ka    [KeySize]byte
+	km    [KeySize]byte
+	block cipher.Block
+	mac   hash.Hash
+	buf   [64]byte // tag header scratch: label, cid, index, seed
+}
+
+func newCache() *cache { return &cache{} }
+
+// state locks the cache for k, rebuilding what no longer matches k's keys.
+// The caller unlocks c.mu.
+func (k *Keys) state() *cache {
+	if k.c == nil {
+		k.c = newCache() // only a Keys literal gets here (tests)
+	}
+	c := k.c
+	c.mu.Lock()
+	if c.block == nil || c.ka != k.Ka {
+		c.block, _ = aes.NewCipher(k.Ka[:]) // fails only on a bad key length
+		c.ka = k.Ka
+	}
+	if c.mac == nil || c.km != k.Km {
+		c.mac = hmac.New(sha256.New, k.Km[:])
+		c.km = k.Km
+	}
+	return c
 }
 
 // MSSize is the serialised size of Keys.
@@ -71,9 +112,10 @@ const MSSize = 3 * KeySize
 
 // Generate draws three independent keys from r.
 func Generate(r io.Reader) (*Keys, error) {
-	var k Keys
+	k := Keys{c: newCache()}
 	for _, p := range []*[KeySize]byte{&k.Kc, &k.Ka, &k.Km} {
 		if _, err := io.ReadFull(r, p[:]); err != nil {
+			k.Zeroize()
 			return nil, fmt.Errorf("%w: %v", ErrNoRand, err)
 		}
 	}
@@ -85,7 +127,7 @@ func FromBytes(b []byte) (*Keys, error) {
 	if len(b) != MSSize {
 		return nil, fmt.Errorf("ta1: master secret is %d bytes, want %d", len(b), MSSize)
 	}
-	var k Keys
+	k := Keys{c: newCache()}
 	copy(k.Kc[:], b[:KeySize])
 	copy(k.Ka[:], b[KeySize:2*KeySize])
 	copy(k.Km[:], b[2*KeySize:])
@@ -105,6 +147,15 @@ func (k *Keys) Zeroize() {
 	clear(k.Kc[:])
 	clear(k.Ka[:])
 	clear(k.Km[:])
+	if c := k.c; c != nil {
+		c.mu.Lock()
+		clear(c.ka[:])
+		clear(c.km[:])
+		clear(c.buf[:])
+		c.block, c.mac = nil, nil
+		c.mu.Unlock()
+		k.c = nil
+	}
 }
 
 // Cascade sets dst = src XOR XChaCha20(Kc, seed[0:24]) XOR AES-256-CTR(Ka,
@@ -121,7 +172,10 @@ func (k *Keys) Cascade(dst, src []byte, seed *[SeedSize]byte) error {
 // cascade is Cascade without the size check; callers have made it.
 func (k *Keys) cascade(dst, src []byte, seed *[SeedSize]byte) {
 	xchacha20(&k.Kc, (*[24]byte)(seed[:24]), dst[:len(src)], src)
-	aes256ctr(&k.Ka, (*[16]byte)(seed[24:]), dst[:len(src)], dst[:len(src)])
+	// The AES key schedule is built once per key, not per object (#8).
+	c := k.state()
+	cipher.NewCTR(c.block, seed[24:]).XORKeyStream(dst[:len(src)], dst[:len(src)])
+	c.mu.Unlock()
 }
 
 // xchacha20 XORs src with the XChaCha20 keystream (counter 0). The
@@ -132,28 +186,50 @@ func xchacha20(key *[32]byte, nonce *[24]byte, dst, src []byte) {
 	c.XORKeyStream(dst, src)
 }
 
-// aes256ctr XORs src with the AES-256-CTR keystream whose first counter
-// block is iv (big-endian increment over the whole block, as in SP 800-38A).
-func aes256ctr(key *[32]byte, iv *[16]byte, dst, src []byte) {
-	b, _ := aes.NewCipher(key[:])
-	cipher.NewCTR(b, iv[:]).XORKeyStream(dst, src)
+// mac locks k's keyed HMAC state and resets it, which restores the
+// precomputed pads instead of hashing them again (#9). Every macState must
+// end with sum, which unlocks.
+func (k *Keys) mac() macState {
+	c := k.state()
+	c.mac.Reset()
+	return macState{c}
 }
 
-func (k *Keys) mac() *macState {
-	return &macState{h: hmac.New(sha256.New, k.Km[:])}
+// macState writes into the cached HMAC. Small fixed fields are copied into
+// the cache's scratch buffer before the write: a slice handed to an
+// interface method escapes, so writing a caller's stack array directly
+// would cost a heap allocation per tag.
+type macState struct{ c *cache }
+
+// small writes a field of at most len(buf) bytes through the scratch buffer.
+func (m macState) small(b []byte) {
+	n := copy(m.c.buf[:], b)
+	m.c.mac.Write(m.c.buf[:n])
 }
 
-type macState struct{ h hash.Hash }
-
-func (m *macState) label(l string) {
-	m.h.Write([]byte{byte(len(l))})
-	m.h.Write([]byte(l))
+func (m macState) label(l string) {
+	if len(l) >= len(m.c.buf) {
+		m.c.mu.Unlock()
+		panic("ta1: label longer than the scratch buffer: " + l) // labels are constants
+	}
+	m.c.buf[0] = byte(len(l))
+	n := copy(m.c.buf[1:], l)
+	m.c.mac.Write(m.c.buf[:1+n])
 }
 
-func (m *macState) u64(v uint64) {
-	var b [8]byte
-	binary.LittleEndian.PutUint64(b[:], v)
-	m.h.Write(b[:])
+func (m macState) u64(v uint64) {
+	binary.LittleEndian.PutUint64(m.c.buf[:8], v)
+	m.c.mac.Write(m.c.buf[:8])
+}
+
+// write is for caller-owned data of any length (already on the heap).
+func (m macState) write(b []byte) { m.c.mac.Write(b) }
+
+// sum finishes the MAC and unlocks the cache.
+func (m macState) sum() (out [32]byte) {
+	copy(out[:], m.c.mac.Sum(m.c.buf[:0]))
+	m.c.mu.Unlock()
+	return out
 }
 
 // MAC returns HMAC-SHA-256(Km, u8(len(label)) || label || parts...).
@@ -171,11 +247,9 @@ func (k *Keys) MAC(label string, parts ...[]byte) [32]byte {
 	m := k.mac()
 	m.label(label)
 	for _, p := range parts {
-		m.h.Write(p)
+		m.write(p)
 	}
-	var out [32]byte
-	m.h.Sum(out[:0])
-	return out
+	return m.sum()
 }
 
 // SectorTag is t = HMAC-SHA-256(Km, label(leaf) || cid || u64(i) || r || C)[0:24].
@@ -195,12 +269,11 @@ func (k *Keys) UnwrittenTag(cid *[16]byte, idx uint64, seed *[SeedSize]byte) [Se
 func (k *Keys) sectorTag(label string, cid *[16]byte, idx uint64, seed *[SeedSize]byte, ct []byte) [SectorTagSize]byte {
 	m := k.mac()
 	m.label(label)
-	m.h.Write(cid[:])
+	m.small(cid[:])
 	m.u64(idx)
-	m.h.Write(seed[:])
-	m.h.Write(ct)
-	var full [32]byte
-	m.h.Sum(full[:0])
+	m.small(seed[:])
+	m.write(ct)
+	full := m.sum()
 	var t [SectorTagSize]byte
 	copy(t[:], full[:SectorTagSize])
 	return t
@@ -233,12 +306,10 @@ func (k *Keys) sealTag(label string, ad, seed, ct []byte) [32]byte {
 	m := k.mac()
 	m.label(label)
 	m.u64(uint64(len(ad)))
-	m.h.Write(ad)
-	m.h.Write(seed)
-	m.h.Write(ct)
-	var t [32]byte
-	m.h.Sum(t[:0])
-	return t
+	m.write(ad)
+	m.write(seed)
+	m.write(ct)
+	return m.sum()
 }
 
 // Seal returns seed(40) || ciphertext || tag(32). The tag is the full
