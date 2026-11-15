@@ -96,6 +96,7 @@ jobs:
       matrix:
         include:
           - {pkg: ./internal/ta1, target: FuzzOpen}
+          - {pkg: ./internal/journal, target: FuzzRecover}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

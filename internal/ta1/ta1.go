@@ -38,15 +38,17 @@ const (
 // They are length-prefixed inside the MAC input, so no label is a prefix of
 // another by construction.
 const (
-	LabelLeaf    = "theca/v1/TA1/leaf"
-	LabelNode1   = "theca/v1/TA1/n1"
-	LabelNode    = "theca/v1/TA1/n"
-	LabelEmpty   = "theca/v1/TA1/empty"
-	LabelHeader  = "theca/v1/TA1/header"
-	LabelSlot    = "theca/v1/TA1/slot"
-	LabelLocator = "theca/v1/TA1/locator"
-	LabelJournal = "theca/v1/TA1/journal"
-	LabelCommit  = "theca/v1/TA1/commit"
+	LabelLeaf  = "theca/v1/TA1/leaf"
+	LabelNode1 = "theca/v1/TA1/n1"
+	LabelNode  = "theca/v1/TA1/n"
+	LabelEmpty = "theca/v1/TA1/empty"
+	// LabelUnwritten marks a never-written sector inside a written block.
+	LabelUnwritten = "theca/v1/TA1/unwritten"
+	LabelHeader    = "theca/v1/TA1/header"
+	LabelSlot      = "theca/v1/TA1/slot"
+	LabelLocator   = "theca/v1/TA1/locator"
+	LabelJournal   = "theca/v1/TA1/journal"
+	LabelCommit    = "theca/v1/TA1/commit"
 )
 
 // Errors. ErrAuth is the single answer to "this did not authenticate": a
@@ -178,8 +180,21 @@ func (k *Keys) MAC(label string, parts ...[]byte) [32]byte {
 
 // SectorTag is t = HMAC-SHA-256(Km, label(leaf) || cid || u64(i) || r || C)[0:24].
 func (k *Keys) SectorTag(cid *[16]byte, idx uint64, seed *[SeedSize]byte, ct []byte) [SectorTagSize]byte {
+	return k.sectorTag(LabelLeaf, cid, idx, seed, ct)
+}
+
+// UnwrittenTag is the tag of a sector that was never written, inside a
+// metadata block that exists. The entry (random seed, UnwrittenTag) looks
+// like any written entry to anyone without Km, so the block does not reveal
+// which of its 64 sectors hold data. A reader checks it first and returns
+// zeros without touching the data area.
+func (k *Keys) UnwrittenTag(cid *[16]byte, idx uint64, seed *[SeedSize]byte) [SectorTagSize]byte {
+	return k.sectorTag(LabelUnwritten, cid, idx, seed, nil)
+}
+
+func (k *Keys) sectorTag(label string, cid *[16]byte, idx uint64, seed *[SeedSize]byte, ct []byte) [SectorTagSize]byte {
 	m := k.mac()
-	m.label(LabelLeaf)
+	m.label(label)
 	m.h.Write(cid[:])
 	m.u64(idx)
 	m.h.Write(seed[:])
