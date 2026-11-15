@@ -8,6 +8,7 @@
 package format
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -168,14 +169,13 @@ func ParseBody(p []byte, fileSize uint64) (*Body, Geometry, error) {
 			Bound:  binary.LittleEndian.Uint64(p[143:]),
 		}
 	}
-	for _, v := range p[151:] {
-		if v != 0 {
-			return nil, Geometry{}, fmt.Errorf("%w: non-zero padding", ErrBody)
-		}
-	}
-	if p[2]&flagCtr == 0 && (binary.LittleEndian.Uint32(p[74:]) != 0 || p[78] != 0 ||
-		binary.LittleEndian.Uint64(p[143:]) != 0) {
-		return nil, Geometry{}, fmt.Errorf("%w: counter fields without the flag", ErrBody)
+	// One byte string per body: whatever the fields above did not read
+	// (padding, the counter name's unused tail, counter fields without the
+	// flag) must be zero, which is exactly "it marshals back to itself".
+	// Checking that, rather than listing regions, cannot miss one: the
+	// earlier list missed the name's tail (FuzzParseBody, PR #12's CI).
+	if !bytes.Equal(b.Marshal(), p) {
+		return nil, Geometry{}, fmt.Errorf("%w: not in canonical form", ErrBody)
 	}
 	g, err := NewGeometry(b.Sectors, b.JournalEntries)
 	if err != nil {
