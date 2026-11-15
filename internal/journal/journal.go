@@ -87,13 +87,19 @@ func pad(rng io.Reader, sealed []byte) ([]byte, error) {
 // slots), calling sync between the records and the commit entry and after
 // the commit entry. A crash before the commit entry is durable leaves a
 // transaction that recovery will not accept.
+//
+// An error returned AFTER the commit entry was written (the final sync)
+// means the transaction may be committed. The caller must then run Recover
+// and apply the result before writing any other transaction for the same
+// epoch: two committed transactions for one epoch would let a restored
+// journal copy replace an acknowledged one.
 func Write(k *ta1.Keys, w io.WriterAt, entries uint32, tx *Tx, rng io.Reader, sync func() error) error {
 	if uint64(len(tx.Records))+1 > uint64(entries) {
 		return ErrFull
 	}
 	h := sha256.New()
 	for i, r := range tx.Records {
-		if len(r.Data) != BlockSize {
+		if len(r.Data) != BlockSize || (r.Area != AreaData && r.Area != AreaMeta && r.Area != AreaNode) {
 			return ErrBlock
 		}
 		p := make([]byte, 0, recPlain)
@@ -135,7 +141,9 @@ func Write(k *ta1.Keys, w io.WriterAt, entries uint32, tx *Tx, rng io.Reader, sy
 }
 
 // Recover returns the committed transaction for epoch+1, or nil if the
-// journal holds none. A wrong key, a torn write and an old transaction all
+// journal holds none. The caller MUST apply it and then check that the tree
+// root now on disk equals tx.Root before moving the header (DESIGN 5.3);
+// Recover only authenticates the root, it cannot recompute it. A wrong key, a torn write and an old transaction all
 // yield nil: recovery never guesses.
 func Recover(k *ta1.Keys, r io.ReaderAt, entries uint32, epoch uint64) (*Tx, error) {
 	if epoch == ^uint64(0) {
@@ -146,7 +154,8 @@ func Recover(k *ta1.Keys, r io.ReaderAt, entries uint32, epoch uint64) (*Tx, err
 	h := sha256.New()
 	buf := make([]byte, EntrySize)
 	for seq := uint32(0); seq < entries; seq++ {
-		if _, err := r.ReadAt(buf, int64(seq)*EntrySize); err != nil {
+		// ReaderAt may return (len(p), io.EOF) on the last full slot.
+		if n, err := r.ReadAt(buf, int64(seq)*EntrySize); err != nil && n < len(buf) {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return nil, nil
 			}

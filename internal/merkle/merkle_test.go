@@ -351,3 +351,41 @@ func TestDirty(t *testing.T) {
 		t.Fatal("not cleared")
 	}
 }
+
+func TestBytesOfUnloadedNode(t *testing.T) {
+	k := keys(t)
+	sh, _ := NewShape(64)
+	tr := New(k, sh, EmptyRoot(k, sh), &memStore{})
+	if tr.Bytes(0) != nil {
+		t.Fatal("unloaded node has bytes")
+	}
+}
+
+// TestNodeMovedToAnotherOrdinal: a genuine node copied over another slot of
+// the tree fails (positions are bound by the parent's slot).
+func TestNodeMovedToAnotherOrdinal(t *testing.T) {
+	k := keys(t)
+	sh, _ := NewShape(64 * 300)
+	st := &memStore{nodes: map[uint64][]byte{}}
+	tr := New(k, sh, EmptyRoot(k, sh), st)
+	for _, m := range []uint64{3, 140, 299} {
+		blk := make([]byte, 4096)
+		rand.Read(blk)
+		tr.SetMeta(m, N1(k, blk))
+	}
+	commit(tr, st)
+	o0, _ := sh.Ordinal(2, 0)
+	o1, _ := sh.Ordinal(2, 1)
+	st.nodes[o0], st.nodes[o1] = st.nodes[o1], st.nodes[o0]
+	fresh := New(k, sh, tr.Root(), st)
+	if _, err := fresh.Meta(3); !errors.Is(err, ErrTamper) {
+		t.Fatalf("swapped nodes: %v", err)
+	}
+	// a level-2 node presented as the top node
+	st.nodes[o0], st.nodes[o1] = st.nodes[o1], st.nodes[o0]
+	top, _ := sh.Ordinal(3, 0)
+	st.nodes[top] = st.nodes[o0]
+	if _, err := New(k, sh, tr.Root(), st).Meta(3); !errors.Is(err, ErrTamper) {
+		t.Fatalf("level confusion: %v", err)
+	}
+}

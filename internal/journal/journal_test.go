@@ -344,3 +344,52 @@ func FuzzRecover(f *testing.F) {
 		}
 	})
 }
+
+func TestWriteRefusesAnAreaRecoveryWouldDrop(t *testing.T) {
+	k := keys(t)
+	for _, a := range []Area{0, 4, 9} {
+		tx := sample(1, 1)
+		tx.Records[0].Area = a
+		if err := Write(k, &mem{}, 3, tx, rand.Reader, noSync); !errors.Is(err, ErrBlock) {
+			t.Fatalf("area %d: %v", a, err)
+		}
+	}
+}
+
+// eofReader returns (len(p), io.EOF) on the last slot, as io.ReaderAt allows.
+type eofReader struct{ m *mem }
+
+func (e eofReader) ReadAt(p []byte, off int64) (int, error) {
+	n, _ := e.m.ReadAt(p, off)
+	if int(off)+n == len(e.m.b) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestLastSlotMayReturnEOF(t *testing.T) {
+	k := keys(t)
+	tx := sample(1, slots-1) // the commit entry is the last slot
+	m := write(t, k, tx)
+	got, err := Recover(k, eofReader{m}, slots, 0)
+	if err != nil || got == nil || !equal(got, tx) {
+		t.Fatalf("%v %v", got, err)
+	}
+}
+
+// TestStaleTailSameEpoch: a longer transaction for the SAME target epoch
+// (an aborted first attempt) leaves a tail behind a shorter, torn second
+// attempt. The tail's records sit at the right positions and epoch but the
+// commit hash covers only records 0..n-1, so it must not complete.
+func TestStaleTailSameEpoch(t *testing.T) {
+	k := keys(t)
+	crash := errors.New("crash")
+	m := write(t, k, sample(8, 6))
+	if err := Write(k, m, slots, sample(8, 2), rand.Reader, func() error { return crash }); err == nil {
+		t.Fatal("sync error swallowed")
+	}
+	// records 0,1 are new; entry 2 is the old record 2, not a commit
+	if got, _ := Recover(k, m, slots, 7); got != nil {
+		t.Fatal("old tail accepted behind new records")
+	}
+}

@@ -8,6 +8,7 @@
 package merkle
 
 import (
+	"crypto/hmac"
 	"errors"
 	"fmt"
 	"slices"
@@ -172,7 +173,10 @@ func (t *Tree) node(level int, idx uint64) (*[NodeSize]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(raw) != NodeSize || nodeValue(t.k, level, raw) != want {
+		if len(raw) != NodeSize {
+			return nil, fmt.Errorf("%w: level %d node %d has %d bytes", ErrTamper, level, idx, len(raw))
+		}
+		if got := nodeValue(t.k, level, raw); !hmac.Equal(got[:], want[:]) {
 			return nil, fmt.Errorf("%w: level %d node %d", ErrTamper, level, idx)
 		}
 		copy(n[:], raw)
@@ -238,8 +242,16 @@ func (t *Tree) Dirty() []uint64 {
 // DirtyCount is len(Dirty()).
 func (t *Tree) DirtyCount() int { return len(t.dirty) }
 
-// Bytes returns the current content of a loaded node.
-func (t *Tree) Bytes(ord uint64) []byte { return t.nodes[ord][:] }
+// Bytes returns the current content of a loaded node, or nil if it is not
+// loaded. The node cache has no bound: a full 2^40-sector container would
+// cache up to 2^27 level-2 nodes (DESIGN section 19, I10).
+func (t *Tree) Bytes(ord uint64) []byte {
+	n, ok := t.nodes[ord]
+	if !ok {
+		return nil
+	}
+	return n[:]
+}
 
 // ClearDirty forgets the dirty set after the nodes were committed.
 func (t *Tree) ClearDirty() { clear(t.dirty) }
