@@ -265,20 +265,35 @@ func TestLocator(t *testing.T) {
 	if !ok || !bytes.Equal(got.CredID, loc.CredID) || got.Salt != loc.Salt || got.Flags != loc.Flags {
 		t.Fatalf("round trip: %+v %v", got, ok)
 	}
-	// Untagged: a wrong key never errors, it yields garbage that is usually
-	// not even shaped like a locator. Count how often a wrong key "parses".
+	// Untagged and shapeless: a wrong key ALWAYS yields a valid-looking
+	// locator, so no password guess can be filtered without asking the key
+	// (review of PR #4). The lengths it yields cover the whole 1..128 range.
 	other := kdf.KEK([]byte("other"), "pw")
-	shaped := 0
-	for i := 0; i < 400; i++ {
+	lengths := map[int]bool{}
+	for i := 0; i < 2000; i++ {
 		b, _ := SealLocator(&kek, loc, rand.Reader)
-		if g, ok := OpenLocator(&other, b); ok && bytes.Equal(g.CredID, loc.CredID) {
-			t.Fatal("wrong key recovered the credential id")
-		} else if ok {
-			shaped++
+		g, ok := OpenLocator(&other, b)
+		if !ok || len(g.CredID) < 1 || len(g.CredID) > MaxCredID || g.Flags&^locMask != 0 {
+			t.Fatalf("wrong key did not yield a well-formed locator: %v %+v", ok, g)
 		}
+		if bytes.Equal(g.CredID, loc.CredID) {
+			t.Fatal("wrong key recovered the credential id")
+		}
+		lengths[len(g.CredID)] = true
 	}
-	if shaped < 100 || shaped > 300 { // P(shaped) is about 129/256 * 1/64... check not silly
-		t.Logf("garbage shaped like a locator: %d of 400", shaped)
+	if len(lengths) < 100 {
+		t.Fatalf("only %d distinct lengths from a wrong key", len(lengths))
+	}
+	// The length encoding is exact at both ends.
+	for _, n := range []int{1, 128} {
+		l := &Locator{CredID: bytes.Repeat([]byte{5}, n), Flags: LocPIN2}
+		b, err := SealLocator(&kek, l, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if g, ok := OpenLocator(&kek, b); !ok || !bytes.Equal(g.CredID, l.CredID) || g.Flags != LocPIN2 {
+			t.Fatalf("length %d did not round trip", n)
+		}
 	}
 	// Refusals.
 	for _, l := range []*Locator{

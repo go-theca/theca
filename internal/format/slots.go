@@ -86,7 +86,7 @@ func SealLocator(partner *[32]byte, loc *Locator, rng io.Reader) ([]byte, error)
 	if _, err := io.ReadFull(rng, plain); err != nil {
 		return nil, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
 	}
-	plain[0] = byte(len(loc.CredID))
+	plain[0] = plain[0]&0x80 | byte(len(loc.CredID)-1) // the top bit is random padding
 	copy(plain[1:], loc.CredID)
 	copy(plain[1+MaxCredID:], loc.Salt[:])
 	plain[1+MaxCredID+32] = loc.Flags
@@ -96,9 +96,9 @@ func SealLocator(partner *[32]byte, loc *Locator, rng io.Reader) ([]byte, error)
 }
 
 // OpenLocator decrypts a slot as a locator under the partner KEK. There is no
-// tag, so a wrong key or a non-locator slot yields garbage; ok reports only
-// whether the garbage is shaped like a locator. The caller asks the key to
-// tell.
+// tag and no shape check: a wrong key or a non-locator slot yields a
+// plausible-looking locator, and ok is false only for a blob of the wrong
+// size. The caller asks the key, which is the only verifier.
 func OpenLocator(partner *[32]byte, blob []byte) (Locator, bool) {
 	if len(blob) != SlotSize {
 		return Locator{}, false
@@ -107,11 +107,12 @@ func OpenLocator(partner *[32]byte, blob []byte) (Locator, bool) {
 	defer wk.Zeroize()
 	plain, _ := wk.OpenUntagged(blob) // fails only on a bad size, checked above
 	defer clear(plain)
-	n := int(plain[0])
-	flags := plain[1+MaxCredID+32]
-	if n == 0 || n > MaxCredID || flags&^locMask != 0 {
-		return Locator{}, false
-	}
+	// Every string decodes to a locator: length = (b mod 128) + 1 and the
+	// flag bits are masked. No shape test exists, so a wrong partner KEK
+	// cannot be filtered out without asking the key (review of PR #4: a
+	// shape test leaked about 3 bits of every password guess).
+	n := int(plain[0]&0x7f) + 1
+	flags := plain[1+MaxCredID+32] & locMask
 	loc := Locator{CredID: append([]byte(nil), plain[1:1+n]...), Flags: flags}
 	copy(loc.Salt[:], plain[1+MaxCredID:])
 	return loc, true
