@@ -316,6 +316,23 @@ func TestFreeSlotEndsOnAConstantSource(t *testing.T) {
 	}
 }
 
+// TestRemoveSlotRandomFailure: the filler cannot be drawn, nothing is
+// written and the container stays usable. Deterministic, because the
+// random-source sweep reaches this read only when rejection sampling
+// happens to line up (it missed on arm64 CI, run 43746927759).
+func TestRemoveSlotRandomFailure(t *testing.T) {
+	c, f, _ := create(t, PolicyAny)
+	saved, writes := c.rng, f.writes
+	c.rng = failReader{}
+	if err := c.RemoveSlot(0); !errors.Is(err, ta1.ErrNoRand) || f.writes != writes {
+		t.Fatalf("%v, %d writes", err, f.writes-writes)
+	}
+	c.rng = saved
+	if err := c.Sync(); err != nil {
+		t.Fatalf("container broken by a refused removal: %v", err)
+	}
+}
+
 // TestCounterExhausted: a counter at its maximum cannot be rebound.
 func TestCounterExhausted(t *testing.T) {
 	f, ctr := counterContainer(t, math.MaxUint64-1)
