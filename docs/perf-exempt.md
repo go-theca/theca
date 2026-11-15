@@ -8,7 +8,6 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `Container.Sync`: the journal commit, i.e. sealed records, two flushes and a header seal. It is bounded by the backing's flush latency, not by computation, and there is no C counterpart.
 - `Container.Close`: `Sync`, then the keys are wiped.
 - `Container.AddSlot`: one slot seal (2 KiB, TA1) and a commit. Rare and interactive.
-- `Container.AddLocator`: as `AddSlot`.
 - `Container.RemoveSlot`: one 2 KiB random write and a commit. Rare and interactive.
 - `Container.EnrollFIDO2`: dominated by the user's touch on the key.
 - `Container.Info`: a copy of a small struct.

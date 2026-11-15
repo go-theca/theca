@@ -245,110 +245,6 @@ func TestSlotRandomFailures(t *testing.T) {
 	if _, err := SealWrap(ms, &kek, 0, failRand{}); !errors.Is(err, ta1.ErrNoRand) {
 		t.Fatal(err)
 	}
-	loc := &Locator{CredID: []byte{1, 2, 3}}
-	if _, err := SealLocator(&kek, loc, failRand{}); !errors.Is(err, ta1.ErrNoRand) {
-		t.Fatal(err)
-	}
-	// second draw (the seed) failing
-	if _, err := SealLocator(&kek, loc, &limited{n: 1}); !errors.Is(err, ta1.ErrNoRand) {
-		t.Fatal(err)
-	}
-}
-
-type limited struct{ n int }
-
-func (l *limited) Read(p []byte) (int, error) {
-	if l.n == 0 {
-		return 0, io.ErrUnexpectedEOF
-	}
-	l.n--
-	return rand.Read(p)
-}
-
-func TestLocator(t *testing.T) {
-	kek := kdf.KEK([]byte("partner"), "pw")
-	loc := &Locator{CredID: bytes.Repeat([]byte{7}, 96), Flags: LocUV | LocPIN2}
-	rand.Read(loc.Salt[:])
-	blob, err := SealLocator(&kek, loc, rand.Reader)
-	if err != nil || len(blob) != SlotSize {
-		t.Fatalf("%d %v", len(blob), err)
-	}
-	got, ok := OpenLocator(&kek, blob)
-	if !ok || !bytes.Equal(got.CredID, loc.CredID) || got.Salt != loc.Salt || got.Flags != loc.Flags {
-		t.Fatalf("round trip: %+v %v", got, ok)
-	}
-	// Untagged and shapeless: a wrong key ALWAYS yields a valid-looking
-	// locator, so no password guess can be filtered without asking the key
-	// (review of PR #4). The lengths it yields cover the whole 1..128 range.
-	other := kdf.KEK([]byte("other"), "pw")
-	lengths := map[int]bool{}
-	for i := 0; i < 2000; i++ {
-		b, _ := SealLocator(&kek, loc, rand.Reader)
-		g, ok := OpenLocator(&other, b)
-		if !ok || len(g.CredID) < 1 || len(g.CredID) > MaxCredID || g.Flags&^locMask != 0 {
-			t.Fatalf("wrong key did not yield a well-formed locator: %v %+v", ok, g)
-		}
-		if bytes.Equal(g.CredID, loc.CredID) {
-			t.Fatal("wrong key recovered the credential id")
-		}
-		lengths[len(g.CredID)] = true
-	}
-	if len(lengths) < 100 {
-		t.Fatalf("only %d distinct lengths from a wrong key", len(lengths))
-	}
-	// The test above only sees what OpenLocator returns; an attacker reads
-	// the decrypted bytes. Under the RIGHT key, every bit that is not data
-	// must be random: the 6 non-flag bits of the flags byte take both values
-	// across sealings (review 2 of PR #4: they were always 0, a 6-bit
-	// offline test of every password guess).
-	wk := kdf.Keys(&kek)
-	orBits, andBits := byte(0), byte(0xff)
-	for i := 0; i < 256; i++ {
-		b, _ := SealLocator(&kek, loc, rand.Reader)
-		plain, err := wk.OpenUntagged(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fb := plain[1+MaxCredID+32] &^ locMask
-		orBits |= fb
-		andBits &= fb
-		if plain[0]&0x80 != 0 {
-			orBits |= 1 // also count the length byte's padding bit
-		} else {
-			andBits &^= 1
-		}
-	}
-	wk.Zeroize()
-	if orBits != 0xff&^locMask|1 || andBits != 0 {
-		t.Fatalf("padding bits constant under the right key: or %08b and %08b", orBits, andBits)
-	}
-	// The length encoding is exact at both ends.
-	for _, n := range []int{1, 128} {
-		l := &Locator{CredID: bytes.Repeat([]byte{5}, n), Flags: LocPIN2}
-		b, err := SealLocator(&kek, l, rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if g, ok := OpenLocator(&kek, b); !ok || !bytes.Equal(g.CredID, l.CredID) || g.Flags != LocPIN2 {
-			t.Fatalf("length %d did not round trip", n)
-		}
-	}
-	// Refusals.
-	for _, l := range []*Locator{
-		{CredID: nil}, {CredID: make([]byte, 129)}, {CredID: []byte{1}, Flags: 0x80},
-	} {
-		if _, err := SealLocator(&kek, l, rand.Reader); !errors.Is(err, ErrSlot) {
-			t.Fatalf("%+v: %v", l, err)
-		}
-	}
-	if _, ok := OpenLocator(&kek, blob[:5]); ok {
-		t.Fatal("short blob parsed")
-	}
-	// A wrap slot read as a locator: no panic, and not a usable credential
-	// unless it happens to be shaped like one.
-	ms := keys(t)
-	w, _ := SealWrap(ms, &kek, 0, rand.Reader)
-	OpenLocator(&kek, w)
 }
 
 func TestRecoveryCode(t *testing.T) {
@@ -414,17 +310,6 @@ func FuzzParseBody(f *testing.F) {
 		}
 		if !bytes.Equal(b.Marshal(), p) {
 			t.Fatal("parse then marshal is not the identity")
-		}
-	})
-}
-
-func FuzzOpenLocator(f *testing.F) {
-	f.Add(make([]byte, SlotSize))
-	f.Add([]byte{})
-	kek := kdf.KEK([]byte("fuzz"), "pw")
-	f.Fuzz(func(t *testing.T, b []byte) {
-		if l, ok := OpenLocator(&kek, b); ok && (len(l.CredID) == 0 || len(l.CredID) > MaxCredID) {
-			t.Fatal("locator outside its bounds")
 		}
 	})
 }

@@ -295,6 +295,23 @@ func TestKeysExpandsOneKEKIntoThreeDistinctKeys(t *testing.T) {
 }
 
 // The expected values below are RFC 5869 computed from bare HMAC-SHA-256.
+func TestFIDO2SaltMatchesRFC5869(t *testing.T) {
+	// HKDF(salt = nil, IKM = partner KEK, info = "theca/v1/fido2/salt/<kind>").
+	kek := KEK(rep(3, 32), "pw")
+	prk := hmacSHA256(make([]byte, 32), kek[:])
+	want := hmacSHA256(prk, append([]byte("theca/v1/fido2/salt/pw"), 1))
+	got := FIDO2Salt(&kek, "pw")
+	if !bytes.Equal(got[:], want) {
+		t.Fatal("FIDO2Salt differs from RFC 5869")
+	}
+	// A different partner (a wrong password) or kind gives another salt, and
+	// the salt is never the KEK itself.
+	other := KEK(rep(4, 32), "pw")
+	if FIDO2Salt(&other, "pw") == got || FIDO2Salt(&kek, "rc") == got || got == kek {
+		t.Fatal("salt not separated by partner, kind, or from the KEK")
+	}
+}
+
 func TestHKDFMatchesRFC5869(t *testing.T) {
 	// The KEK is HKDF(salt = nil, info = prefix+kind), one 32-byte block:
 	// T(1) = HMAC(PRK, info || 0x01) with PRK = HMAC(0^32, IKM).

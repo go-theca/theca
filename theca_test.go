@@ -249,42 +249,52 @@ func TestWrongFactors(t *testing.T) {
 	}
 }
 
-// fakeKey plays a FIDO2 authenticator: a per-credential secret and
-// HMAC-SHA-256 over the salt, written from the CTAP hmac-secret description.
+// fakeKey plays a FIDO2 authenticator holding discoverable Theca
+// credentials: a CredRandom per credential and HMAC-SHA-256 over each salt,
+// written from the CTAP 2.1 hmac-secret description (§12.5). Every call is
+// one touch on a real key, and is counted.
 type fakeKey struct {
-	creds   map[string][]byte
+	creds   [][]byte // CredRandom of each credential, in creation order
 	derives int
-	enrolls int // every Enroll is a touch on a real key
+	enrolls int
+	salts   [][32]byte // the salts of the last call
 	failErr error
 }
 
-func newKey() *fakeKey { return &fakeKey{creds: map[string][]byte{}} }
+func newKey() *fakeKey { return &fakeKey{} }
 
-func (k *fakeKey) Enroll(context.Context) (Locator, []byte, error) {
+func (k *fakeKey) out(cr []byte, salts [][32]byte) [][]byte {
+	outs := make([][]byte, len(salts))
+	for j, s := range salts {
+		h := hmac.New(sha256.New, cr)
+		h.Write(s[:])
+		outs[j] = h.Sum(nil)
+	}
+	return outs
+}
+
+func (k *fakeKey) Enroll(_ context.Context, salts [][32]byte) ([][]byte, error) {
 	k.enrolls++
-	loc := Locator{CredID: rnd(64), Flags: format.LocUV}
-	rand.Read(loc.Salt[:])
+	k.salts = salts
 	cr := rnd(32)
-	k.creds[string(loc.CredID)] = cr
-	return loc, k.out(cr, loc.Salt[:]), nil
+	k.creds = append(k.creds, cr)
+	return k.out(cr, salts), nil
 }
 
-func (k *fakeKey) out(cr, salt []byte) []byte {
-	h := hmac.New(sha256.New, cr)
-	h.Write(salt)
-	return h.Sum(nil)
-}
-
-func (k *fakeKey) Derive(_ context.Context, loc Locator) ([]byte, error) {
+func (k *fakeKey) Derive(_ context.Context, salts [][32]byte) ([][][]byte, error) {
 	k.derives++
+	k.salts = salts
 	if k.failErr != nil {
 		return nil, k.failErr
 	}
-	cr, ok := k.creds[string(loc.CredID)]
-	if !ok {
+	if len(k.creds) == 0 {
 		return nil, ErrNoCredential
 	}
-	return k.out(cr, loc.Salt[:]), nil
+	var res [][][]byte
+	for _, cr := range k.creds {
+		res = append(res, k.out(cr, salts))
+	}
+	return res, nil
 }
 
 func TestTwoOfThreeWithFIDO2(t *testing.T) {
@@ -299,8 +309,11 @@ func TestTwoOfThreeWithFIDO2(t *testing.T) {
 	if err := c.EnrollFIDO2(ctx, key, pw, rc); err != nil {
 		t.Fatal(err)
 	}
-	if c.Info().SlotsUsed != 1+2*2 { // {pw,rc}, then {pw,key}+loc and {rc,key}+loc
+	if c.Info().SlotsUsed != 1+2 { // {pw,rc}, then {pw,key} and {rc,key}: no locators
 		t.Fatalf("slots used: %d", c.Info().SlotsUsed)
+	}
+	if key.enrolls != 1 {
+		t.Fatalf("enrolment took %d touches, want 1 (both salts in one request)", key.enrolls)
 	}
 	c.Close()
 
@@ -345,14 +358,149 @@ func TestTwoOfThreeWithFIDO2(t *testing.T) {
 	if err := open(Unlock{Password: []byte("correct horse"), FIDO: &fakeKey{failErr: boom}}); !errors.Is(err, boom) {
 		t.Errorf("key error not surfaced: %v", err)
 	}
-	// The key was asked about garbage candidates as well as the real one,
-	// and the answer never depended on a tag.
-	if key.derives == 0 {
-		t.Error("key never consulted")
+	// One question per unlock, whatever the number of partners: the
+	// password+recovery+key unlock asked once, with two salts.
+	before := key.derives
+	if err := open(Unlock{Password: []byte("correct horse"), Recovery: code, FIDO: key}); err != nil {
+		t.Fatal(err)
 	}
-	if err := c.EnrollFIDO2(ctx, key); err == nil {
+	if key.derives != before+1 || len(key.salts) != 2 {
+		t.Fatalf("one unlock asked the key %d times with %d salts", key.derives-before, len(key.salts))
+	}
+	// The key alone is never asked (it pairs with a partner).
+	before = key.derives
+	open(Unlock{FIDO: key})
+	if key.derives != before {
+		t.Fatal("a key with no partner was asked")
+	}
+	if err := c.EnrollFIDO2(ctx, key, pw); err == nil {
 		t.Error("closed container enrolled a key")
 	}
+}
+
+// TestFIDO2SaltFollowsThePartner (DESIGN 19, I21): the salt the key is asked
+// for is derived from the partner factor, so a wrong password asks the key
+// for a DIFFERENT salt (one touch-gated question per guess, no offline test),
+// and nothing about the key is stored in the container.
+func TestFIDO2SaltFollowsThePartner(t *testing.T) {
+	c, f, _ := create(t, PolicyAny)
+	salt := make([]byte, format.SaltSize)
+	f.ReadAt(salt, 0)
+	pw, _ := PasswordFactor(0, []byte("correct horse"), salt)
+	key := newKey()
+	if err := c.EnrollFIDO2(ctx, key, pw); err != nil {
+		t.Fatal(err)
+	}
+	enrolled := key.salts[0]
+	c.Close()
+	Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: key}, OpenOptions{})
+	if key.salts[0] != enrolled {
+		t.Fatal("the right password asked for another salt")
+	}
+	Open(ctx, f, Unlock{Password: []byte("wrong guess"), FIDO: key}, OpenOptions{})
+	if key.salts[0] == enrolled {
+		t.Fatal("a wrong password asked for the enrolled salt")
+	}
+	// No slot of the container contains the salt or the key's output.
+	for i := 0; i < format.NumSlots; i++ {
+		b := make([]byte, format.SlotSize)
+		f.ReadAt(b, int64(format.SlotsOff+i*format.SlotSize))
+		if bytes.Contains(b, enrolled[:]) {
+			t.Fatal("the salt is stored in a slot")
+		}
+	}
+}
+
+// TestTwoKeysAndManyCredentials: every Theca credential on a key is tried
+// from ONE answer, and two enrolled keys each open the container.
+func TestTwoKeysAndManyCredentials(t *testing.T) {
+	c, f, code := create(t, PolicyTwoOfThree)
+	salt := make([]byte, format.SaltSize)
+	f.ReadAt(salt, 0)
+	pw, _ := PasswordFactor(0, []byte("correct horse"), salt)
+	rc, _ := RecoveryFactor(code)
+	k1, k2 := newKey(), newKey()
+	k1.creds = [][]byte{rnd(32), rnd(32)} // credentials of other containers
+	if err := c.EnrollFIDO2(ctx, k1, pw, rc); err != nil {
+		t.Fatal(err)
+	}
+	k1.creds = append(k1.creds, rnd(32)) // and one made later
+	if err := c.EnrollFIDO2(ctx, k2, pw); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	for name, u := range map[string]Unlock{
+		"k1 + password": {Password: []byte("correct horse"), FIDO: k1},
+		"k1 + recovery": {Recovery: code, FIDO: k1},
+		"k2 + password": {Password: []byte("correct horse"), FIDO: k2},
+	} {
+		r, err := Open(ctx, f, u, OpenOptions{})
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		r.Close()
+	}
+	// k2 was enrolled with the password only.
+	if _, err := Open(ctx, f, Unlock{Recovery: code, FIDO: k2}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
+		t.Errorf("k2 + recovery: %v", err)
+	}
+}
+
+// badKey answers malformed outputs.
+type badKey struct {
+	fakeKey
+	enrollOuts [][]byte
+	deriveOuts [][][]byte
+}
+
+func (b *badKey) Enroll(context.Context, [][32]byte) ([][]byte, error) { return b.enrollOuts, nil }
+func (b *badKey) Derive(context.Context, [][32]byte) ([][][]byte, error) {
+	return b.deriveOuts, nil
+}
+
+func TestMalformedAuthenticatorAnswers(t *testing.T) {
+	c, f, _ := create(t, PolicyAny)
+	pw := Factor{Kind: "pw", KEK: [32]byte{1}}
+	for name, outs := range map[string][][]byte{
+		"no output":    nil,
+		"two for one":  {rnd(32), rnd(32)},
+		"short output": {rnd(31)},
+	} {
+		if err := c.EnrollFIDO2(ctx, &badKey{enrollOuts: outs}, pw); !errors.Is(err, ErrAuthenticator) {
+			t.Errorf("enrol, %s: %v", name, err)
+		}
+	}
+	if c.Info().SlotsUsed != 2 {
+		t.Fatalf("a refused enrolment used slots: %d", c.Info().SlotsUsed)
+	}
+	c.Close()
+	many := make([][][]byte, MaxFIDO2Credentials+1)
+	for i := range many {
+		many[i] = [][]byte{rnd(32)}
+	}
+	for name, creds := range map[string][][][]byte{
+		"wrong count":  {{rnd(32), rnd(32)}},
+		"short output": {{rnd(16)}},
+		"too many":     many,
+	} {
+		_, err := Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: &badKey{deriveOuts: creds}}, OpenOptions{})
+		if !errors.Is(err, ErrAuthenticator) {
+			t.Errorf("unlock, %s: %v", name, err)
+		}
+	}
+	// Exactly the maximum is accepted (and simply finds nothing extra).
+	r, err := Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: &badKey{deriveOuts: many[:MaxFIDO2Credentials]}}, OpenOptions{})
+	if err != nil {
+		t.Fatalf("at the maximum: %v", err)
+	}
+	r.Close()
+	// A key with no Theca credential is routine: the password alone opens.
+	r, err = Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: newKey()}, OpenOptions{})
+	if err != nil {
+		t.Fatalf("empty key: %v", err)
+	}
+	r.Close()
 }
 
 func TestEnrollRefusals(t *testing.T) {
@@ -360,8 +508,11 @@ func TestEnrollRefusals(t *testing.T) {
 	if err := c.EnrollFIDO2(ctx, newKey()); !errors.Is(err, ErrOption) {
 		t.Fatal("enrolment without a partner")
 	}
-	bad := &enrollFails{}
 	pw := Factor{Kind: "pw"}
+	if err := c.EnrollFIDO2(ctx, newKey(), pw, pw, pw); !errors.Is(err, ErrOption) {
+		t.Fatal("enrolment with three partners (hmac-secret carries two salts)")
+	}
+	bad := &enrollFails{}
 	if err := c.EnrollFIDO2(ctx, bad, pw); err == nil {
 		t.Fatal("enrol error swallowed")
 	}
@@ -369,8 +520,8 @@ func TestEnrollRefusals(t *testing.T) {
 
 type enrollFails struct{ fakeKey }
 
-func (*enrollFails) Enroll(context.Context) (Locator, []byte, error) {
-	return Locator{}, nil, errors.New("touch timed out")
+func (*enrollFails) Enroll(context.Context, [][32]byte) ([][]byte, error) {
+	return nil, errors.New("touch timed out")
 }
 
 func TestSlotManagement(t *testing.T) {
@@ -971,8 +1122,8 @@ func TestRandomnessFailures(t *testing.T) {
 	if err := c.AddSlot(Factor{Kind: "x"}); err == nil {
 		t.Error("slot with a failing source")
 	}
-	if err := c.AddLocator(Factor{}, Locator{CredID: []byte{1}}); err == nil {
-		t.Error("locator with a failing source")
+	if err := c.EnrollFIDO2(ctx, newKey(), Factor{Kind: "pw"}); err == nil {
+		t.Error("enrolment with a failing source")
 	}
 	if _, err := c.freeSlot(); err == nil {
 		t.Error("freeSlot with a failing source")
@@ -1098,7 +1249,7 @@ func TestIOErrorsAreNeverSwallowed(t *testing.T) {
 		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
 			return err
 		}
-		if err := c.AddLocator(FIDO2Factor(rnd(32)), Locator{CredID: []byte{1}}); err != nil {
+		if err := c.EnrollFIDO2(ctx, newKey(), FIDO2Factor(rnd(32))); err != nil {
 			return err
 		}
 		if err := c.RemoveSlot(0); err != nil {
@@ -1206,7 +1357,7 @@ func TestIOErrorsInSlotsAndTruncate(t *testing.T) {
 		if _, err := c.WriteAt(rnd(40000), 1000); err != nil { // 10 sectors, journal of 8: budget commits
 			return err
 		}
-		if err := c.AddLocator(FIDO2Factor(rnd(32)), Locator{CredID: []byte{1}}); err != nil {
+		if err := c.EnrollFIDO2(ctx, newKey(), FIDO2Factor(rnd(32))); err != nil {
 			return err
 		}
 		if err := c.RemoveSlot(usedSlot(c)); err != nil {
@@ -1229,7 +1380,7 @@ func TestRandomSourceFailuresAreNeverSwallowed(t *testing.T) {
 		steps := []func() error{
 			func() error { _, e := c.WriteAt(rnd(9000), 50); return e },
 			func() error { return c.AddSlot(FIDO2Factor(rnd(32))) },
-			func() error { return c.AddLocator(FIDO2Factor(rnd(32)), Locator{CredID: []byte{1}}) },
+			func() error { return c.EnrollFIDO2(ctx, newKey(), FIDO2Factor(rnd(32))) },
 			func() error { return c.RemoveSlot(usedSlot(c)) },
 			func() error { return c.Sync() },
 		}
@@ -1247,35 +1398,34 @@ func TestRandomSourceFailuresAreNeverSwallowed(t *testing.T) {
 	}
 }
 
-func TestEnrollAndLocatorRefusals(t *testing.T) {
+func TestEnrollRoomRefusals(t *testing.T) {
 	c, _, _ := create(t, PolicyAny)
-	if err := c.AddLocator(Factor{}, Locator{CredID: nil}); !errors.Is(err, format.ErrSlot) {
-		t.Fatalf("invalid locator: %v", err)
-	}
 	for c.Info().SlotsUsed < format.NumSlots-1 {
 		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// One free slot left: the pairwise slot would fit, its locator would
-	// not. The enrolment is refused whole, before the key is touched, and
-	// the last slot stays free.
+	// One free slot left: a key paired with two partners needs two. The
+	// enrolment is refused whole, before the key is touched, and the last
+	// slot stays free.
 	k := newKey()
-	if err := c.EnrollFIDO2(ctx, k, Factor{Kind: "pw"}); !errors.Is(err, ErrNoSlot) || k.enrolls != 0 {
+	pw, rc := Factor{Kind: "pw", KEK: [32]byte{1}}, Factor{Kind: "rc", KEK: [32]byte{2}}
+	if err := c.EnrollFIDO2(ctx, k, pw, rc); !errors.Is(err, ErrNoSlot) || k.enrolls != 0 {
 		t.Fatalf("enrolment without room: %v after %d touches", err, k.enrolls)
 	}
 	if c.Info().SlotsUsed != format.NumSlots-1 {
 		t.Fatalf("a refused enrolment used slots: %d", c.Info().SlotsUsed)
 	}
-	if err := c.AddLocator(Factor{}, Locator{CredID: []byte{1}}); err != nil {
+	// One partner fits.
+	if err := c.EnrollFIDO2(ctx, k, pw); err != nil {
 		t.Fatal(err)
 	}
 	// Now there is none at all.
-	if err := c.AddLocator(Factor{}, Locator{CredID: []byte{1}}); !errors.Is(err, ErrNoSlot) {
+	if err := c.EnrollFIDO2(ctx, k, pw); !errors.Is(err, ErrNoSlot) {
 		t.Fatalf("%v", err)
 	}
 	c.Close()
-	if err := c.AddLocator(Factor{}, Locator{CredID: []byte{1}}); !errors.Is(err, ErrClosed) {
+	if err := c.EnrollFIDO2(ctx, k, pw); !errors.Is(err, ErrClosed) {
 		t.Fatalf("%v", err)
 	}
 	if err := c.AddSlot(Factor{}); !errors.Is(err, ErrClosed) {

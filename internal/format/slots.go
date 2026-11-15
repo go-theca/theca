@@ -9,12 +9,8 @@ import (
 	"github.com/go-theca/theca/internal/ta1"
 )
 
-const (
-	wrapPlain    = SlotSize - ta1.SealOverhead // 1976: MS then zero padding
-	locatorPlain = SlotSize - ta1.SeedSize     // 2008
-	// MaxCredID is CTAP's maxCredentialIdLength on the YubiKey 5.7.4 capture.
-	MaxCredID = 128
-)
+// wrapPlain is a wrap slot's plaintext: MS then zero padding (1976 bytes).
+const wrapPlain = SlotSize - ta1.SealOverhead
 
 // ErrSlot is returned for malformed slot input.
 var ErrSlot = errors.New("format: invalid slot")
@@ -33,6 +29,10 @@ func slotAD(index int) []byte { return []byte{byte(index)} }
 // SealWrap seals the master secret in slot `index` under a key-encryption
 // key (single factor, or the pair key of kdf.Pair). The slot is sealed with
 // TA1 itself, so both cipher families protect it (DESIGN 6.2).
+//
+// There is no other kind of slot: a FIDO2 key needs nothing stored beside
+// its pairwise wrap slot, because its credential is discoverable and its
+// salt is derived from the partner factor (DESIGN 19, I21).
 func SealWrap(ms *ta1.Keys, kek *[32]byte, index int, rng io.Reader) ([]byte, error) {
 	if index < 0 || index >= NumSlots {
 		return nil, ErrSlot
@@ -58,65 +58,4 @@ func OpenWrap(kek *[32]byte, index int, blob []byte) (*ta1.Keys, error) {
 	}
 	defer clear(plain)
 	return ta1.FromBytes(plain[:ta1.MSSize])
-}
-
-// Locator is what a FIDO2 factor needs to be asked for its secret (DESIGN
-// 6.3, HARDWARE-KEYS 5.1): the credential ID, the fixed 32-byte salt of the
-// slot (decision H7) and a flags byte.
-type Locator struct {
-	CredID []byte
-	Salt   [32]byte
-	Flags  byte
-}
-
-// Locator flag bits.
-const (
-	LocUV   = 1 << 0 // user verification was required at enrolment
-	LocPIN2 = 1 << 1 // PIN/UV protocol 2
-	locMask = LocUV | LocPIN2
-)
-
-// SealLocator seals a locator, untagged, under the partner factor's KEK
-// (decision H2 and DESIGN section 19, I3). Padding is random.
-func SealLocator(partner *[32]byte, loc *Locator, rng io.Reader) ([]byte, error) {
-	if len(loc.CredID) == 0 || len(loc.CredID) > MaxCredID || loc.Flags&^locMask != 0 {
-		return nil, ErrSlot
-	}
-	plain := make([]byte, locatorPlain)
-	if _, err := io.ReadFull(rng, plain); err != nil {
-		return nil, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
-	}
-	plain[0] = plain[0]&0x80 | byte(len(loc.CredID)-1) // the top bit is random padding
-	copy(plain[1:], loc.CredID)
-	copy(plain[1+MaxCredID:], loc.Salt[:])
-	// Only the flag bits are set; the other 6 bits keep their random
-	// padding. Writing the whole byte left them at 0 in every real locator,
-	// a 6-bit test of each password guess offline (review 2 of PR #4).
-	plain[1+MaxCredID+32] = plain[1+MaxCredID+32]&^locMask | loc.Flags
-	wk := kdf.Keys(partner)
-	defer wk.Zeroize()
-	return wk.SealUntagged(plain, rng)
-}
-
-// OpenLocator decrypts a slot as a locator under the partner KEK. There is no
-// tag and no shape check: a wrong key or a non-locator slot yields a
-// plausible-looking locator, and ok is false only for a blob of the wrong
-// size. The caller asks the key, which is the only verifier.
-func OpenLocator(partner *[32]byte, blob []byte) (Locator, bool) {
-	if len(blob) != SlotSize {
-		return Locator{}, false
-	}
-	wk := kdf.Keys(partner)
-	defer wk.Zeroize()
-	plain, _ := wk.OpenUntagged(blob) // fails only on a bad size, checked above
-	defer clear(plain)
-	// Every string decodes to a locator: length = (b mod 128) + 1 and the
-	// flag bits are masked. No shape test exists, so a wrong partner KEK
-	// cannot be filtered out without asking the key (review of PR #4: a
-	// shape test leaked about 3 bits of every password guess).
-	n := int(plain[0]&0x7f) + 1
-	flags := plain[1+MaxCredID+32] & locMask
-	loc := Locator{CredID: append([]byte(nil), plain[1:1+n]...), Flags: flags}
-	copy(loc.Salt[:], plain[1+MaxCredID:])
-	return loc, true
 }
