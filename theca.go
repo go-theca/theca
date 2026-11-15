@@ -1,0 +1,873 @@
+// Package theca is an encrypted container format: authenticated sectors
+// (XChaCha20 xor AES-256-CTR, HMAC-SHA-256), a Merkle tree, a write-ahead
+// journal, no magic, and keyslots opened by a password, a recovery code and
+// hardware factors. See docs/DESIGN.md.
+//
+// This package is a library over a Backing (a file or block device); it does
+// not mount anything.
+package theca
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"slices"
+	"sync"
+
+	"golang.org/x/crypto/chacha20"
+
+	"github.com/go-theca/theca/internal/format"
+	"github.com/go-theca/theca/internal/journal"
+	"github.com/go-theca/theca/internal/kdf"
+	"github.com/go-theca/theca/internal/merkle"
+	"github.com/go-theca/theca/internal/ta1"
+)
+
+// SectorSize is the logical sector size.
+const SectorSize = ta1.SectorSize
+
+// DefaultJournalEntries is used when CreateOptions leaves it zero.
+const DefaultJournalEntries = 64
+
+// Errors.
+var (
+	// ErrNoMatch is the single answer to "nothing unlocked this": a wrong
+	// password, a wrong key, a corrupted slot area and a file that is not a
+	// container are indistinguishable (DESIGN 13).
+	ErrNoMatch = errors.New("theca: no factor opened a keyslot")
+	// ErrCorrupt: the container unlocked but a structure failed to
+	// authenticate (both header copies, a tree node, a metadata block).
+	ErrCorrupt = errors.New("theca: container is corrupted or was tampered with")
+	// ErrSector names a data sector whose tag failed: an I/O error, never
+	// silently zero data.
+	ErrSector = errors.New("theca: sector failed authentication")
+	// ErrRollback: the header is older than the hardware counter allows.
+	ErrRollback = errors.New("theca: container is older than the rollback counter (use AcceptRollback to rebind)")
+	// ErrCounter: the counter given does not match the one the header names.
+	ErrCounter = errors.New("theca: rollback counter missing or not the one recorded in the header")
+	ErrRange   = errors.New("theca: offset or length out of range")
+	ErrBroken  = errors.New("theca: container failed an earlier write and must be reopened")
+	ErrClosed  = errors.New("theca: container is closed")
+	ErrNoSlot  = errors.New("theca: no free keyslot")
+	ErrOption  = errors.New("theca: invalid option")
+	// ErrNoCredential is returned by a FIDO2 provider for a locator its key
+	// does not know. It is routine during unlock and not an error.
+	ErrNoCredential = errors.New("theca: authenticator does not know this credential")
+)
+
+// Backing is the storage under a container.
+type Backing interface {
+	io.ReaderAt
+	io.WriterAt
+	Sync() error
+	Size() (int64, error)
+}
+
+// FileBacking adapts an *os.File.
+type FileBacking struct{ *os.File }
+
+// Size implements Backing.
+func (f FileBacking) Size() (int64, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}
+
+// Locator is the FIDO2 locator stored in a locator slot.
+type Locator = format.Locator
+
+// Counter is a hardware monotonic counter (DESIGN 5.4): in practice a TPM NV
+// counter. Handle and Name identify the index; the container pins both.
+type Counter interface {
+	Handle() uint32
+	Name() []byte
+	Read() (uint64, error)
+	Increment() error
+}
+
+// FIDO2 is a hmac-secret authenticator. Both calls produce the raw 32-byte
+// hmac-secret output; the container derives a KEK from it.
+type FIDO2 interface {
+	// Enroll makes a credential and a fresh salt and returns the locator and
+	// the secret for that salt.
+	Enroll(ctx context.Context) (Locator, []byte, error)
+	// Derive asks the key for the secret of a locator. It returns
+	// ErrNoCredential if the key does not know the credential.
+	Derive(ctx context.Context, loc Locator) ([]byte, error)
+}
+
+// Factor is one access factor reduced to a key-encryption key.
+type Factor struct {
+	Kind string // "pw", "rc", "fido2"
+	KEK  [32]byte
+}
+
+// Zeroize wipes the factor's key.
+func (f *Factor) Zeroize() { clear(f.KEK[:]) }
+
+// PasswordFactor runs Argon2id (one evaluation, D2) with the hinted profile.
+func PasswordFactor(hint int, password, salt []byte) (Factor, error) {
+	out, err := kdf.Argon2id(hint, password, salt)
+	if err != nil {
+		return Factor{}, err
+	}
+	defer clear(out)
+	return Factor{Kind: "pw", KEK: kdf.KEK(out, "pw")}, nil
+}
+
+// RecoveryFactor parses a printed recovery code.
+func RecoveryFactor(code string) (Factor, error) {
+	raw, err := format.ParseRecoveryCode(code)
+	if err != nil {
+		return Factor{}, err
+	}
+	defer clear(raw)
+	return Factor{Kind: "rc", KEK: kdf.KEK(raw, "rc")}, nil
+}
+
+// FIDO2Factor turns an hmac-secret output into a factor.
+func FIDO2Factor(secret []byte) Factor { return Factor{Kind: "fido2", KEK: kdf.KEK(secret, "fido2")} }
+
+func slotKEK(fs []Factor) ([32]byte, error) {
+	switch len(fs) {
+	case 1:
+		return fs[0].KEK, nil
+	case 2:
+		return kdf.Pair(&fs[0].KEK, fs[0].Kind, &fs[1].KEK, fs[1].Kind), nil
+	}
+	return [32]byte{}, fmt.Errorf("%w: a slot needs one or two factors", ErrOption)
+}
+
+// Policy chooses the slots a new container gets.
+type Policy int
+
+const (
+	// PolicyAny: the password alone, and the recovery code alone, each open
+	// the container (1-of-n).
+	PolicyAny Policy = iota
+	// PolicyTwoOfThree: password + recovery code open it; a hardware factor
+	// added later pairs with each of them (DESIGN 6.2, D3).
+	PolicyTwoOfThree
+)
+
+// CreateOptions configures Create.
+type CreateOptions struct {
+	Sectors        uint64
+	JournalEntries uint32 // 0: DefaultJournalEntries (raised to the minimum)
+	Hint           int    // Argon2id profile (D2)
+	Password       []byte
+	Policy         Policy
+	Counter        Counter   // optional hardware counter
+	Rand           io.Reader // nil: crypto/rand
+}
+
+// OpenOptions configures Open.
+type OpenOptions struct {
+	Counter        Counter
+	AcceptRollback bool
+	Rand           io.Reader
+}
+
+// Unlock carries the factors the user presents.
+type Unlock struct {
+	Hint     int
+	Password []byte
+	Recovery string
+	FIDO     FIDO2
+}
+
+// Info describes an open container.
+type Info struct {
+	Sectors            uint64
+	Size               uint64
+	Epoch              uint64
+	SlotsUsed          int
+	RollbackProtected  bool
+	JournalEntries     uint32
+	ReplayedTransation bool
+}
+
+// Container is an open container. It is safe for concurrent use.
+type Container struct {
+	mu     sync.Mutex
+	f      Backing
+	rng    io.Reader
+	geo    format.Geometry
+	body   format.Body
+	k      *ta1.Keys
+	tree   *merkle.Tree
+	meta   map[uint64]*[4096]byte // verified metadata blocks (clean and dirty)
+	dMeta  map[uint64]struct{}
+	dData  map[uint64][]byte
+	broken error
+	closed bool
+	info   Info
+}
+
+type region struct {
+	f   Backing
+	off int64
+}
+
+func (r region) ReadAt(p []byte, off int64) (int, error)  { return r.f.ReadAt(p, r.off+off) }
+func (r region) WriteAt(p []byte, off int64) (int, error) { return r.f.WriteAt(p, r.off+off) }
+
+type nodeStore struct{ c *Container }
+
+func (n nodeStore) LoadNode(ord uint64) ([]byte, error) {
+	b := make([]byte, merkle.NodeSize)
+	if _, err := n.c.f.ReadAt(b, int64(n.c.geo.TreeOff+ord*merkle.NodeSize)); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func randOr(r io.Reader) io.Reader {
+	if r == nil {
+		return rand.Reader
+	}
+	return r
+}
+
+// fillRandom writes a ChaCha20 keystream (key from rng) over [0, size).
+func fillRandom(f Backing, size uint64, rng io.Reader) error {
+	var kn [44]byte
+	if _, err := io.ReadFull(rng, kn[:]); err != nil {
+		return fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+	}
+	c, _ := chacha20.NewUnauthenticatedCipher(kn[:32], kn[32:])
+	buf := make([]byte, 1<<20)
+	for off := uint64(0); off < size; off += uint64(len(buf)) {
+		n := min(uint64(len(buf)), size-off)
+		clear(buf[:n])
+		c.XORKeyStream(buf[:n], buf[:n])
+		if _, err := f.WriteAt(buf[:n], int64(off)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Create formats a new container in f. It returns the container and, for
+// both policies, the printed recovery code (shown once, never stored).
+func Create(f Backing, o CreateOptions) (*Container, string, error) {
+	rng := randOr(o.Rand)
+	jn := o.JournalEntries
+	if jn == 0 {
+		jn = DefaultJournalEntries
+	}
+	shape, err := merkle.NewShape(max(o.Sectors, 1))
+	if err != nil || o.Sectors == 0 {
+		return nil, "", fmt.Errorf("%w: sectors %d", ErrOption, o.Sectors)
+	}
+	jn = max(jn, format.MinJournal(shape))
+	geo, err := format.NewGeometry(o.Sectors, jn)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(o.Password) == 0 {
+		return nil, "", fmt.Errorf("%w: empty password", ErrOption)
+	}
+	if o.Policy != PolicyAny && o.Policy != PolicyTwoOfThree {
+		return nil, "", fmt.Errorf("%w: policy %d", ErrOption, o.Policy)
+	}
+
+	ms, err := ta1.Generate(rng)
+	if err != nil {
+		return nil, "", err
+	}
+	var cid [16]byte
+	var salt [format.SaltSize]byte
+	if _, err := io.ReadFull(rng, cid[:]); err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+	}
+	if _, err := io.ReadFull(rng, salt[:]); err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+	}
+	pw, err := PasswordFactor(o.Hint, o.Password, salt[:])
+	if err != nil {
+		return nil, "", err
+	}
+	defer pw.Zeroize()
+	rawRC, printed, err := format.NewRecoveryCode(rng)
+	if err != nil {
+		return nil, "", err
+	}
+	rc := Factor{Kind: "rc", KEK: kdf.KEK(rawRC, "rc")}
+	clear(rawRC)
+	defer rc.Zeroize()
+
+	if err := fillRandom(f, geo.End, rng); err != nil {
+		return nil, "", err
+	}
+	if err := trunc(f, geo.End); err != nil {
+		return nil, "", err
+	}
+	if _, err := f.WriteAt(salt[:], 0); err != nil {
+		return nil, "", err
+	}
+
+	c := &Container{f: f, rng: rng, geo: geo, k: ms,
+		meta: map[uint64]*[4096]byte{}, dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
+	c.body = format.Body{CID: cid, Sectors: o.Sectors, JournalEntries: jn,
+		Root: merkle.EmptyRoot(ms, geo.Shape)}
+	c.tree = merkle.New(ms, geo.Shape, c.body.Root, nodeStore{c})
+
+	var specs [][]Factor
+	switch o.Policy {
+	case PolicyAny:
+		specs = [][]Factor{{pw}, {rc}}
+	case PolicyTwoOfThree:
+		specs = [][]Factor{{pw, rc}}
+	}
+	for _, s := range specs {
+		if err := c.putSlot(s); err != nil {
+			return nil, "", err
+		}
+	}
+	if o.Counter != nil {
+		if err := o.Counter.Increment(); err != nil {
+			return nil, "", err
+		}
+		c0, err := o.Counter.Read()
+		if err != nil {
+			return nil, "", err
+		}
+		c.body.Counter = &format.Counter{Handle: o.Counter.Handle(), Name: o.Counter.Name(), Bound: c0}
+		c.info.RollbackProtected = true
+	}
+	if err := c.writeHeader(); err != nil {
+		return nil, "", err
+	}
+	if err := f.Sync(); err != nil {
+		return nil, "", err
+	}
+	c.fillInfo()
+	return c, printed, nil
+}
+
+// trunc grows a backing that supports it so a fresh file has its size.
+func trunc(f Backing, size uint64) error {
+	if t, ok := f.(interface{ Truncate(int64) error }); ok {
+		cur, err := f.Size()
+		if err != nil {
+			return err
+		}
+		if uint64(cur) > size {
+			return t.Truncate(int64(size))
+		}
+	}
+	return nil
+}
+
+func (c *Container) fillInfo() {
+	n := 0
+	for i := 0; i < format.NumSlots; i++ {
+		if c.body.SlotsUsed&(1<<i) != 0 {
+			n++
+		}
+	}
+	c.info.Sectors = c.body.Sectors
+	c.info.Size = c.body.Sectors * SectorSize
+	c.info.Epoch = c.body.Epoch
+	c.info.SlotsUsed = n
+	c.info.JournalEntries = c.body.JournalEntries
+	c.info.RollbackProtected = c.body.Counter != nil
+}
+
+// freeSlot picks a random unused slot index.
+func (c *Container) freeSlot() (int, error) {
+	var free []int
+	for i := 0; i < format.NumSlots; i++ {
+		if c.body.SlotsUsed&(1<<i) == 0 {
+			free = append(free, i)
+		}
+	}
+	if len(free) == 0 {
+		return 0, ErrNoSlot
+	}
+	var b [1]byte
+	for {
+		if _, err := io.ReadFull(c.rng, b[:]); err != nil {
+			return 0, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+		}
+		if int(b[0]) < 256/len(free)*len(free) { // unbiased
+			return free[int(b[0])%len(free)], nil
+		}
+	}
+}
+
+func (c *Container) writeSlot(i int, blob []byte) error {
+	_, err := c.f.WriteAt(blob, int64(format.SlotsOff+i*format.SlotSize))
+	return err
+}
+
+// putSlot writes a wrap slot for the factors and marks it used in the body
+// (the header write that records it is the caller's).
+func (c *Container) putSlot(fs []Factor) error {
+	kek, err := slotKEK(fs)
+	if err != nil {
+		return err
+	}
+	defer clear(kek[:])
+	i, err := c.freeSlot()
+	if err != nil {
+		return err
+	}
+	blob, err := format.SealWrap(c.k, &kek, i, c.rng)
+	if err != nil {
+		return err
+	}
+	if err := c.writeSlot(i, blob); err != nil {
+		return err
+	}
+	c.body.SlotsUsed |= 1 << i
+	return nil
+}
+
+// writeHeader seals the current body into copy epoch%2. The copy holding the
+// previous epoch is never touched (DESIGN 10.5).
+func (c *Container) writeHeader() error {
+	blob, err := format.SealHeader(c.k, &c.body, c.rng)
+	if err != nil {
+		return err
+	}
+	_, err = c.f.WriteAt(blob, int64(c.geo.Header(c.body.Epoch)))
+	return err
+}
+
+// AddSlot adds a slot opened by the given one or two factors.
+func (c *Container) AddSlot(fs ...Factor) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return err
+	}
+	if err := c.putSlot(fs); err != nil {
+		return err
+	}
+	return c.commitLocked("add slot")
+}
+
+// AddLocator stores a FIDO2 locator sealed under the partner factor's KEK
+// (decision H2).
+func (c *Container) AddLocator(partner Factor, loc Locator) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return err
+	}
+	i, err := c.freeSlot()
+	if err != nil {
+		return err
+	}
+	blob, err := format.SealLocator(&partner.KEK, &loc, c.rng)
+	if err != nil {
+		return err
+	}
+	if err := c.writeSlot(i, blob); err != nil {
+		return err
+	}
+	c.body.SlotsUsed |= 1 << i
+	return c.commitLocked("add locator")
+}
+
+// RemoveSlot overwrites a slot with random bytes. It only stops access to
+// the CURRENT container: anyone holding an older copy can still open that
+// copy with the revoked factor, because the master secret does not change
+// (DESIGN 2, review finding R7). Callers must tell the user.
+func (c *Container) RemoveSlot(i int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return err
+	}
+	if i < 0 || i >= format.NumSlots || c.body.SlotsUsed&(1<<i) == 0 {
+		return fmt.Errorf("%w: slot %d is not in use", ErrOption, i)
+	}
+	c.body.SlotsUsed &^= 1 << i
+	if err := c.commitLocked("remove slot"); err != nil {
+		return err
+	}
+	junk, err := format.RandomSlot(c.rng)
+	if err != nil {
+		return c.fail(err)
+	}
+	if err := c.writeSlot(i, junk); err != nil {
+		return c.fail(err)
+	}
+	if err := c.f.Sync(); err != nil {
+		return c.fail(err)
+	}
+	return nil
+}
+
+// EnrollFIDO2 enrols a hardware key paired with each of the given partner
+// factors: for every partner it adds the pairwise slot {partner, key} and a
+// locator sealed under the partner's KEK. Enrolment needs the master secret,
+// so the container must already be open.
+func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Factor) error {
+	if len(partners) == 0 {
+		return fmt.Errorf("%w: a key needs at least one partner factor", ErrOption)
+	}
+	loc, secret, err := dev.Enroll(ctx)
+	if err != nil {
+		return err
+	}
+	defer clear(secret)
+	key := FIDO2Factor(secret)
+	defer key.Zeroize()
+	for _, p := range partners {
+		if err := c.AddSlot(p, key); err != nil {
+			return err
+		}
+		if err := c.AddLocator(p, loc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Container) usable() error {
+	if c.closed {
+		return ErrClosed
+	}
+	return c.broken
+}
+
+func (c *Container) fail(err error) error {
+	if c.broken == nil {
+		c.broken = fmt.Errorf("%w: %v", ErrBroken, err)
+	}
+	return err
+}
+
+// Info returns a snapshot.
+func (c *Container) Info() Info {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.info
+}
+
+// Size is the logical size in bytes.
+func (c *Container) Size() int64 { return int64(c.body.Sectors * SectorSize) }
+
+// ---- sectors ---------------------------------------------------------------
+
+func (c *Container) freshMeta(m uint64) (*[4096]byte, error) {
+	blk := new([4096]byte)
+	for e := uint64(0); e < merkle.MetaPerBlock; e++ {
+		ent := blk[e*64 : (e+1)*64]
+		if _, err := io.ReadFull(c.rng, ent[:ta1.SeedSize]); err != nil {
+			return nil, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+		}
+		t := c.k.UnwrittenTag(&c.body.CID, m*merkle.MetaPerBlock+e, (*[ta1.SeedSize]byte)(ent[:ta1.SeedSize]))
+		copy(ent[ta1.SeedSize:], t[:])
+	}
+	return blk, nil
+}
+
+// loadMeta returns the verified metadata block m, or nil if it was never
+// written.
+func (c *Container) loadMeta(m uint64) (*[4096]byte, error) {
+	if b, ok := c.meta[m]; ok {
+		return b, nil
+	}
+	v, err := c.tree.Meta(m)
+	if err != nil {
+		return nil, c.treeErr(err)
+	}
+	if v == c.tree.Default() {
+		return nil, nil
+	}
+	b := new([4096]byte)
+	if _, err := c.f.ReadAt(b[:], int64(c.geo.MetaOff+m*4096)); err != nil {
+		return nil, err
+	}
+	if got := merkle.N1(c.k, b[:]); !hmac.Equal(got[:], v[:]) {
+		return nil, fmt.Errorf("%w: metadata block %d", ErrCorrupt, m)
+	}
+	c.meta[m] = b
+	return b, nil
+}
+
+func (c *Container) treeErr(err error) error {
+	if errors.Is(err, merkle.ErrTamper) {
+		return fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	return err
+}
+
+func (c *Container) readSector(s uint64, dst []byte) error {
+	m, e := s/merkle.MetaPerBlock, s%merkle.MetaPerBlock
+	blk, err := c.loadMeta(m)
+	if err != nil {
+		return err
+	}
+	if blk == nil {
+		clear(dst)
+		return nil
+	}
+	ent := blk[e*64 : (e+1)*64]
+	seed := (*[ta1.SeedSize]byte)(ent[:ta1.SeedSize])
+	tag := (*[ta1.SectorTagSize]byte)(ent[ta1.SeedSize:])
+	if un := c.k.UnwrittenTag(&c.body.CID, s, seed); hmac.Equal(un[:], tag[:]) {
+		clear(dst)
+		return nil
+	}
+	ct, ok := c.dData[s]
+	if !ok {
+		ct = make([]byte, SectorSize)
+		if _, err := c.f.ReadAt(ct, int64(c.geo.DataOff+s*SectorSize)); err != nil {
+			return err
+		}
+	}
+	if err := c.k.OpenSector(&c.body.CID, s, dst, ct, seed, tag); err != nil {
+		return fmt.Errorf("%w: sector %d", ErrSector, s)
+	}
+	return nil
+}
+
+func (c *Container) writeSector(s uint64, plain []byte) error {
+	// Commit first if this write could overflow the journal.
+	items := len(c.dData) + len(c.dMeta) + c.tree.DirtyCount()
+	if items+2+c.geo.Shape.Levels() > int(c.geo.JournalEntries)-1 {
+		if err := c.commitLocked("journal budget"); err != nil {
+			return err
+		}
+	}
+	m, e := s/merkle.MetaPerBlock, s%merkle.MetaPerBlock
+	old, err := c.loadMeta(m)
+	if err != nil {
+		return err
+	}
+	blk := new([4096]byte)
+	if old == nil {
+		if fresh, err := c.freshMeta(m); err != nil {
+			return err
+		} else {
+			blk = fresh
+		}
+	} else {
+		*blk = *old
+	}
+	ct := make([]byte, SectorSize)
+	seed, tag, err := c.k.SealSector(&c.body.CID, s, ct, plain, c.rng)
+	if err != nil {
+		return err
+	}
+	copy(blk[e*64:], seed[:])
+	copy(blk[e*64+ta1.SeedSize:], tag[:])
+	if err := c.tree.SetMeta(m, merkle.N1(c.k, blk[:])); err != nil {
+		return c.treeErr(err)
+	}
+	c.meta[m] = blk
+	c.dMeta[m] = struct{}{}
+	c.dData[s] = ct
+	return nil
+}
+
+// ReadAt implements io.ReaderAt over the logical volume.
+func (c *Container) ReadAt(p []byte, off int64) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return 0, err
+	}
+	size := c.body.Sectors * SectorSize
+	if off < 0 {
+		return 0, ErrRange
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if uint64(off) >= size {
+		return 0, io.EOF
+	}
+	want := min(uint64(len(p)), size-uint64(off))
+	var sec [SectorSize]byte
+	var done uint64
+	for done < want {
+		pos := uint64(off) + done
+		s, in := pos/SectorSize, pos%SectorSize
+		if err := c.readSector(s, sec[:]); err != nil {
+			return int(done), err
+		}
+		done += uint64(copy(p[done:want], sec[in:]))
+	}
+	if want < uint64(len(p)) {
+		return int(done), io.EOF
+	}
+	return int(done), nil
+}
+
+// WriteAt implements io.WriterAt. Writes past the end are refused.
+func (c *Container) WriteAt(p []byte, off int64) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return 0, err
+	}
+	size := c.body.Sectors * SectorSize
+	if off < 0 || uint64(off)+uint64(len(p)) > size {
+		return 0, ErrRange
+	}
+	var sec [SectorSize]byte
+	var done uint64
+	for done < uint64(len(p)) {
+		pos := uint64(off) + done
+		s, in := pos/SectorSize, pos%SectorSize
+		n := min(uint64(SectorSize-in), uint64(len(p))-done)
+		if n < SectorSize {
+			if err := c.readSector(s, sec[:]); err != nil {
+				return int(done), err
+			}
+		}
+		copy(sec[in:], p[done:done+n])
+		if err := c.writeSector(s, sec[:]); err != nil {
+			return int(done), err
+		}
+		done += n
+	}
+	return int(done), nil
+}
+
+// ---- commit and recovery ---------------------------------------------------
+
+func (c *Container) dirty() bool {
+	return len(c.dData) > 0 || len(c.dMeta) > 0 || c.tree.DirtyCount() > 0
+}
+
+func sortedKeys[V any](m map[uint64]V) []uint64 {
+	k := make([]uint64, 0, len(m))
+	for x := range m {
+		k = append(k, x)
+	}
+	slices.Sort(k)
+	return k
+}
+
+// commitLocked makes every pending change durable as one journaled
+// transaction that moves the epoch from e to e+1, then writes the header
+// copy for e+1 (DESIGN 5.3). It always runs, even with nothing dirty: header
+// changes (slots, counter binding) ride on the same epoch step. Any failure
+// leaves the in-memory state unusable until reopen, where recovery decides.
+func (c *Container) commitLocked(why string) error {
+	tx := &journal.Tx{Epoch: c.body.Epoch + 1, Root: c.tree.Root()}
+	for _, s := range sortedKeys(c.dData) {
+		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaData, Index: s, Data: c.dData[s]})
+	}
+	for _, m := range sortedKeys(c.dMeta) {
+		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaMeta, Index: m, Data: c.meta[m][:]})
+	}
+	for _, o := range c.tree.Dirty() {
+		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaNode, Index: o, Data: c.tree.Bytes(o)})
+	}
+	jr := region{c.f, int64(c.geo.JournalOff)}
+	if err := journal.Write(c.k, jr, c.body.JournalEntries, tx, c.rng, c.f.Sync); err != nil {
+		return c.fail(fmt.Errorf("%s: journal: %w", why, err))
+	}
+	if err := c.apply(tx); err != nil {
+		return c.fail(fmt.Errorf("%s: apply: %w", why, err))
+	}
+	if err := c.f.Sync(); err != nil {
+		return c.fail(err)
+	}
+	c.body.Epoch = tx.Epoch
+	c.body.Root = tx.Root
+	if err := c.writeHeader(); err != nil {
+		return c.fail(err)
+	}
+	if err := c.f.Sync(); err != nil {
+		return c.fail(err)
+	}
+	clear(c.dData)
+	clear(c.dMeta)
+	c.tree.ClearDirty()
+	c.fillInfo()
+	return nil
+}
+
+// apply writes a transaction's blocks to their destinations. The indexes of
+// a replayed transaction are range-checked here, though they came from
+// authenticated records.
+func (c *Container) apply(tx *journal.Tx) error {
+	for _, r := range tx.Records {
+		var off uint64
+		switch r.Area {
+		case journal.AreaData:
+			if r.Index >= c.geo.Sectors {
+				return fmt.Errorf("%w: data index %d", ErrCorrupt, r.Index)
+			}
+			off = c.geo.DataOff + r.Index*SectorSize
+		case journal.AreaMeta:
+			if r.Index >= c.geo.Shape.MetaBlocks {
+				return fmt.Errorf("%w: metadata index %d", ErrCorrupt, r.Index)
+			}
+			off = c.geo.MetaOff + r.Index*4096
+		default:
+			if r.Index >= c.geo.Shape.NodeCount() {
+				return fmt.Errorf("%w: node index %d", ErrCorrupt, r.Index)
+			}
+			off = c.geo.TreeOff + r.Index*merkle.NodeSize
+		}
+		if _, err := c.f.WriteAt(r.Data, int64(off)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Sync commits pending writes.
+func (c *Container) Sync() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return err
+	}
+	if !c.dirty() {
+		return c.f.Sync()
+	}
+	return c.commitLocked("sync")
+}
+
+// Close commits, wipes the keys and refuses further use. The backing is not
+// closed: it belongs to the caller.
+func (c *Container) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrClosed
+	}
+	var err error
+	if c.broken == nil && c.dirty() {
+		err = c.commitLocked("close")
+	}
+	c.closed = true
+	c.k.Zeroize()
+	clear(c.meta)
+	return err
+}
+
+// Verify reads every sector, authenticating tags, metadata blocks and the
+// tree. It returns the number of sectors checked and the first failure.
+func (c *Container) Verify() (uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return 0, err
+	}
+	var sec [SectorSize]byte
+	for s := uint64(0); s < c.body.Sectors; s++ {
+		if err := c.readSector(s, sec[:]); err != nil {
+			return s, err
+		}
+	}
+	return c.body.Sectors, nil
+}
