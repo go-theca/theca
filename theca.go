@@ -116,7 +116,16 @@ type FIDO2 interface {
 	Derive(ctx context.Context, salts [][32]byte) ([][][]byte, error)
 }
 
-// fido2Salts derives one salt per partner factor.
+func clearSalts(salts [][32]byte) {
+	for i := range salts {
+		clear(salts[i][:])
+	}
+}
+
+// fido2Salts derives one salt per partner factor. A salt is a function of
+// the partner's secret: it is a verifier for guesses of that secret, at the
+// partner's KDF cost (Argon2id for a password). It goes only to the
+// authenticator, and is wiped by the caller (DESIGN 19, I21).
 func fido2Salts(partners []Factor) [][32]byte {
 	salts := make([][32]byte, len(partners))
 	for i := range partners {
@@ -173,6 +182,11 @@ func FIDO2Factor(secret []byte) Factor { return Factor{Kind: "fido2", KEK: kdf.K
 func slotKEK(fs []Factor) ([32]byte, error) {
 	switch len(fs) {
 	case 1:
+		// A key's salt comes from its partner (I21), so a slot opened by the
+		// key alone could never be asked for at unlock: refuse to write one.
+		if fs[0].Kind == "fido2" {
+			return [32]byte{}, fmt.Errorf("%w: a FIDO2 key opens a slot only with a partner factor", ErrOption)
+		}
 		return fs[0].KEK, nil
 	case 2:
 		return kdf.Pair(&fs[0].KEK, fs[0].Kind, &fs[1].KEK, fs[1].Kind), nil
@@ -599,7 +613,9 @@ func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Fact
 		return err
 	}
 	// The lock is not held while the key waits for a touch.
-	outs, err := dev.Enroll(ctx, fido2Salts(partners))
+	salts := fido2Salts(partners) // password-equivalent: wiped, never logged
+	defer clearSalts(salts)
+	outs, err := dev.Enroll(ctx, salts)
 	defer func() {
 		for _, o := range outs {
 			clear(o)

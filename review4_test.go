@@ -48,7 +48,7 @@ func slotOf(t *testing.T, f *memFile, k *Factor) int {
 func TestSlotCrashNeverLeavesAnUnrecordedWorkingSlot(t *testing.T) {
 	base, f, _ := create(t, PolicyAny)
 	base.Close()
-	k := FIDO2Factor(rnd(32))
+	k := randomFactor()
 
 	cuts := 0
 	for cut := 0; ; cut++ {
@@ -97,7 +97,7 @@ func TestSlotCrashNeverLeavesAnUnrecordedWorkingSlot(t *testing.T) {
 // record (an older version's crash, another tool) can still be destroyed.
 func TestUnrecordedWorkingSlotCanBeRemoved(t *testing.T) {
 	c, f, _ := create(t, PolicyAny)
-	k := FIDO2Factor(rnd(32))
+	k := randomFactor()
 	free := c.freeSlots()[0]
 	blob, err := format.SealWrap(c.k, &k.KEK, free, c.rng)
 	if err != nil {
@@ -145,7 +145,7 @@ func TestEnrollChecksFirstAndCommitsOnce(t *testing.T) {
 	}
 	// 3 slots used; fill to 15, so only 1 is free.
 	for c.Info().SlotsUsed < 15 {
-		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+		if err := c.AddSlot(randomFactor()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -299,7 +299,7 @@ func (c constReader) Read(p []byte) (int, error) {
 func TestFreeSlotEndsOnAConstantSource(t *testing.T) {
 	c, _, _ := create(t, PolicyAny)
 	for c.Info().SlotsUsed < format.NumSlots-3 {
-		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+		if err := c.AddSlot(randomFactor()); err != nil {
 			t.Fatal(err)
 		}
 	}

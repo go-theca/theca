@@ -65,7 +65,12 @@ func collectFactors(ctx context.Context, u *Unlock, salt []byte) (cands [][32]by
 	if u.FIDO == nil || len(fs) == 0 {
 		return cands, nil
 	}
-	creds, err := u.FIDO.Derive(ctx, fido2Salts(fs))
+	// The salts are a function of the password: whoever reads one can test
+	// password guesses offline (at Argon2id cost). They are wiped after use
+	// and must never be logged (HARDWARE-KEYS 8.3).
+	salts := fido2Salts(fs)
+	defer clearSalts(salts)
+	creds, err := u.FIDO.Derive(ctx, salts)
 	defer func() {
 		for _, cr := range creds {
 			for _, o := range cr {

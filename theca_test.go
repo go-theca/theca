@@ -100,6 +100,25 @@ func createJ(t testing.TB, policy Policy, journalEntries uint32) (*Container, *m
 
 func pwUnlock() Unlock { return Unlock{Password: []byte("correct horse")} }
 
+// randomFactor is an arbitrary single factor for filling slots: not a FIDO2
+// key, which never opens a slot alone.
+func randomFactor() Factor {
+	var f Factor
+	f.Kind = "rc"
+	rand.Read(f.KEK[:])
+	return f
+}
+
+func TestKeyAloneSlotRefused(t *testing.T) {
+	c, _, _ := create(t, PolicyAny)
+	if err := c.AddSlot(FIDO2Factor(rnd(32))); !errors.Is(err, ErrOption) {
+		t.Fatalf("a slot for the key alone: %v", err)
+	}
+	if err := c.AddSlot(FIDO2Factor(rnd(32)), randomFactor()); err != nil {
+		t.Fatalf("a key with a partner: %v", err)
+	}
+}
+
 func reopen(t testing.TB, f Backing, u Unlock) *Container {
 	t.Helper()
 	c, err := Open(ctx, f, u, OpenOptions{})
@@ -273,9 +292,13 @@ func (k *fakeKey) out(cr []byte, salts [][32]byte) [][]byte {
 	return outs
 }
 
+// record keeps a COPY of the salts, as a real key receives them over the
+// wire: the caller wipes its own after the call.
+func (k *fakeKey) record(salts [][32]byte) { k.salts = append([][32]byte(nil), salts...) }
+
 func (k *fakeKey) Enroll(_ context.Context, salts [][32]byte) ([][]byte, error) {
 	k.enrolls++
-	k.salts = salts
+	k.record(salts)
 	cr := rnd(32)
 	k.creds = append(k.creds, cr)
 	return k.out(cr, salts), nil
@@ -283,7 +306,7 @@ func (k *fakeKey) Enroll(_ context.Context, salts [][32]byte) ([][]byte, error) 
 
 func (k *fakeKey) Derive(_ context.Context, salts [][32]byte) ([][][]byte, error) {
 	k.derives++
-	k.salts = salts
+	k.record(salts)
 	if k.failErr != nil {
 		return nil, k.failErr
 	}
@@ -388,27 +411,66 @@ func TestFIDO2SaltFollowsThePartner(t *testing.T) {
 	f.ReadAt(salt, 0)
 	pw, _ := PasswordFactor(0, []byte("correct horse"), salt)
 	key := newKey()
+	before := c.Info().SlotsUsed
 	if err := c.EnrollFIDO2(ctx, key, pw); err != nil {
 		t.Fatal(err)
 	}
+	// Nothing but the pairwise wrap slot is stored for the key.
+	if got := c.Info().SlotsUsed; got != before+1 {
+		t.Fatalf("enrolment stored %d slots, want 1", got-before)
+	}
 	enrolled := key.salts[0]
 	c.Close()
-	Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: key}, OpenOptions{})
+	r, err := Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: key}, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
 	if key.salts[0] != enrolled {
 		t.Fatal("the right password asked for another salt")
 	}
-	Open(ctx, f, Unlock{Password: []byte("wrong guess"), FIDO: key}, OpenOptions{})
+	// The wrong password is refused by its own slot too, so Open fails; what
+	// matters is the salt the key was asked for.
+	if _, err := Open(ctx, f, Unlock{Password: []byte("wrong guess"), FIDO: key}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
+		t.Fatalf("wrong password: %v", err)
+	}
 	if key.salts[0] == enrolled {
 		t.Fatal("a wrong password asked for the enrolled salt")
 	}
-	// No slot of the container contains the salt or the key's output.
-	for i := 0; i < format.NumSlots; i++ {
-		b := make([]byte, format.SlotSize)
-		f.ReadAt(b, int64(format.SlotsOff+i*format.SlotSize))
-		if bytes.Contains(b, enrolled[:]) {
-			t.Fatal("the salt is stored in a slot")
-		}
+	if enrolled == ([32]byte{}) {
+		t.Fatal("the key was handed a zero salt")
 	}
+}
+
+// TestSaltsAreWipedAfterTheCall: the caller's salts are password-equivalent
+// (I21) and must not outlive the call.
+func TestSaltsAreWipedAfterTheCall(t *testing.T) {
+	c, f, _ := create(t, PolicyAny)
+	c.Close()
+	spy := &spyKey{}
+	Open(ctx, f, Unlock{Password: []byte("correct horse"), FIDO: spy}, OpenOptions{})
+	if spy.seen == nil || spy.seen[0] != ([32]byte{}) {
+		t.Fatal("unlock salts not wiped")
+	}
+	r := reopen(t, f, pwUnlock())
+	pw := randomFactor()
+	r.EnrollFIDO2(ctx, spy, pw)
+	if spy.seen[0] != ([32]byte{}) {
+		t.Fatal("enrolment salts not wiped")
+	}
+}
+
+// spyKey keeps a REFERENCE to the caller's salts, to see them wiped.
+type spyKey struct{ seen [][32]byte }
+
+func (s *spyKey) Enroll(_ context.Context, salts [][32]byte) ([][]byte, error) {
+	s.seen = salts
+	return [][]byte{rnd(32)}, nil
+}
+
+func (s *spyKey) Derive(_ context.Context, salts [][32]byte) ([][][]byte, error) {
+	s.seen = salts
+	return nil, ErrNoCredential
 }
 
 // TestTwoKeysAndManyCredentials: every Theca credential on a key is tried
@@ -568,7 +630,7 @@ func TestSlotManagement(t *testing.T) {
 	// Fill every slot; the 17th is refused.
 	c = reopen(t, f, pwUnlock())
 	for i := 0; ; i++ {
-		k := FIDO2Factor(rnd(32))
+		k := randomFactor()
 		if err := c.AddSlot(k); err != nil {
 			if !errors.Is(err, ErrNoSlot) || i != 15 {
 				t.Fatalf("after %d adds: %v", i, err)
@@ -1246,10 +1308,10 @@ func TestIOErrorsAreNeverSwallowed(t *testing.T) {
 		if _, err := c.WriteAt(rnd(9000), 100); err != nil {
 			return err
 		}
-		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+		if err := c.AddSlot(randomFactor()); err != nil {
 			return err
 		}
-		if err := c.EnrollFIDO2(ctx, newKey(), FIDO2Factor(rnd(32))); err != nil {
+		if err := c.EnrollFIDO2(ctx, newKey(), randomFactor()); err != nil {
 			return err
 		}
 		if err := c.RemoveSlot(0); err != nil {
@@ -1357,7 +1419,7 @@ func TestIOErrorsInSlotsAndTruncate(t *testing.T) {
 		if _, err := c.WriteAt(rnd(40000), 1000); err != nil { // 10 sectors, journal of 8: budget commits
 			return err
 		}
-		if err := c.EnrollFIDO2(ctx, newKey(), FIDO2Factor(rnd(32))); err != nil {
+		if err := c.EnrollFIDO2(ctx, newKey(), randomFactor()); err != nil {
 			return err
 		}
 		if err := c.RemoveSlot(usedSlot(c)); err != nil {
@@ -1379,8 +1441,8 @@ func TestRandomSourceFailuresAreNeverSwallowed(t *testing.T) {
 		var err error
 		steps := []func() error{
 			func() error { _, e := c.WriteAt(rnd(9000), 50); return e },
-			func() error { return c.AddSlot(FIDO2Factor(rnd(32))) },
-			func() error { return c.EnrollFIDO2(ctx, newKey(), FIDO2Factor(rnd(32))) },
+			func() error { return c.AddSlot(randomFactor()) },
+			func() error { return c.EnrollFIDO2(ctx, newKey(), randomFactor()) },
 			func() error { return c.RemoveSlot(usedSlot(c)) },
 			func() error { return c.Sync() },
 		}
@@ -1401,7 +1463,7 @@ func TestRandomSourceFailuresAreNeverSwallowed(t *testing.T) {
 func TestEnrollRoomRefusals(t *testing.T) {
 	c, _, _ := create(t, PolicyAny)
 	for c.Info().SlotsUsed < format.NumSlots-1 {
-		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+		if err := c.AddSlot(randomFactor()); err != nil {
 			t.Fatal(err)
 		}
 	}
