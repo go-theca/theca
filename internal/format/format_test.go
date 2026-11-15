@@ -124,6 +124,18 @@ func TestParseBodyRefusals(t *testing.T) {
 		"counter bound":    mut(func(p []byte) { p[143] = 1 }),
 		"flag, empty name": mut(func(p []byte) { p[2] = flagCtr }),
 		"flag, long name":  mut(func(p []byte) { p[2], p[78] = flagCtr, 65 }),
+		// The two regions the old region list did not cover (FuzzParseBody):
+		"name area, no flag": mut(func(p []byte) { p[100] = 1 }),
+		"name tail, flag": mut(func(p []byte) {
+			p[2], p[78], p[79] = flagCtr, 1, 0xaa // a valid 1-byte name...
+			p[81] = 1                             // ...followed by a non-zero byte
+		}),
+	}
+	// The same 1-byte name with a zero tail is accepted: the case above fails
+	// only on its tail.
+	ok := mut(func(p []byte) { p[2], p[78], p[79] = flagCtr, 1, 0xaa })
+	if _, _, err := ParseBody(ok, 1<<50); err != nil {
+		t.Fatalf("valid counter body refused: %v", err)
 	}
 	for name, p := range cases {
 		if _, _, err := ParseBody(p, 1<<50); err == nil {
