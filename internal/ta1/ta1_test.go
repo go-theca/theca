@@ -301,6 +301,11 @@ func TestMACAgainstReference(t *testing.T) {
 	if !bytes.Equal(tag[:], want[:SectorTagSize]) {
 		t.Fatal("sector tag differs from the reference HMAC")
 	}
+	un := k.UnwrittenTag(&cid, 77, &seed)
+	wantUn := refHMAC(k.Km[:], cat(lab(LabelUnwritten), cid[:], u64(77), seed[:]))
+	if !bytes.Equal(un[:], wantUn[:SectorTagSize]) || un == tag {
+		t.Fatal("unwritten tag differs from the reference HMAC, or equals a leaf tag")
+	}
 	m := k.MAC(LabelNode, []byte{3}, ct)
 	if !bytes.Equal(m[:], refHMAC(k.Km[:], cat(lab(LabelNode), []byte{3}, ct))) {
 		t.Fatal("MAC differs from the reference HMAC")
