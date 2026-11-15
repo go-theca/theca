@@ -1,0 +1,136 @@
+{
+  "schema": 1,
+  "status": "deferred",
+  "date": "2026-11-15T20:27:30+01:00",
+  "commit": "08ad52cfeea44795149eec51d2b184f0889e33e9-dirty-1fe59829",
+  "repo": "go-theca/theca",
+  "go_version": "go1.27.4",
+  "machine": "darwin/arm64, 16 CPUs",
+  "ref_versions": {
+    "OpenSSL": "OpenSSL 3.6.4 25 Aug 2026",
+    "libsodium": "1.0.22"
+  },
+  "max_load": 8,
+  "load": {
+    "min": 0,
+    "median": 0,
+    "max": 0
+  },
+  "valid": true,
+  "rows": [
+    {
+      "name": "Sector/XChaCha20",
+      "func": "Container.WriteAt",
+      "reference": "libsodium crypto_stream_xchacha20_xor",
+      "parity": "exact",
+      "allocs": 0,
+      "valid": false,
+      "go": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ref": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ratio": 0
+    },
+    {
+      "name": "Sector/AES-256-CTR",
+      "func": "Container.WriteAt",
+      "reference": "OpenSSL EVP aes-256-ctr (key schedule reused)",
+      "parity": "exact",
+      "allocs": 2,
+      "valid": false,
+      "go": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ref": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ratio": 0
+    },
+    {
+      "name": "Sector/Tag (HMAC-SHA-256)",
+      "func": "Container.WriteAt",
+      "reference": "OpenSSL EVP_MAC HMAC-SHA256 (key reused)",
+      "parity": "exact",
+      "allocs": 9,
+      "valid": false,
+      "go": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ref": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ratio": 0
+    },
+    {
+      "name": "Sector/Seal",
+      "func": "Container.WriteAt",
+      "reference": "libsodium + OpenSSL, same composition",
+      "parity": "exact",
+      "allocs": 12,
+      "valid": false,
+      "go": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ref": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ratio": 0
+    },
+    {
+      "name": "Sector/Open",
+      "func": "Container.ReadAt",
+      "reference": "libsodium + OpenSSL, same composition",
+      "parity": "exact",
+      "allocs": 11,
+      "valid": false,
+      "go": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ref": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ratio": 0
+    },
+    {
+      "name": "Argon2id/t3-m64MiB-p1",
+      "func": "PasswordFactor",
+      "reference": "libsodium crypto_pwhash ARGON2ID13",
+      "parity": "exact",
+      "allocs": 31,
+      "valid": false,
+      "go": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ref": {
+        "median": 0,
+        "q1": 0,
+        "q3": 0
+      },
+      "ratio": 0
+    }
+  ]
+}
