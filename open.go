@@ -24,6 +24,10 @@ import (
 // recognised by comparing derived KEKs, never by keeping the raw secret as a
 // map key, because a Go string cannot be wiped (review of PR #4, finding 5).
 func collectFactors(ctx context.Context, u *Unlock, salt []byte, table [format.NumSlots][]byte) (fs []Factor, err error) {
+	// The capacity is the most this can hold (password, recovery code, and
+	// one key answer per slot per partner), so append never moves the KEKs
+	// and leaves an unwiped copy behind.
+	fs = make([]Factor, 0, 2+2*format.NumSlots)
 	defer func() {
 		if err != nil {
 			for i := range fs {
@@ -86,7 +90,8 @@ func collectFactors(ctx context.Context, u *Unlock, salt []byte, table [format.N
 // each pair) against all 16 slots. It always does the same work whatever
 // matches (DESIGN 9.2, finding R8) and returns the first master secret found.
 func unlockSlots(fs []Factor, table [format.NumSlots][]byte) *ta1.Keys {
-	var cands [][32]byte
+	// Exact capacity, so append never leaves a copy of a key behind.
+	cands := make([][32]byte, 0, len(fs)*(len(fs)+1)/2)
 	for i := range fs {
 		cands = append(cands, fs[i].KEK)
 		for j := i + 1; j < len(fs); j++ {

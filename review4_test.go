@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-theca/theca/internal/format"
+	"github.com/go-theca/theca/internal/ta1"
 )
 
 // workingUnrecorded returns the indexes of slots the factor opens but the
@@ -287,6 +288,31 @@ func TestRolledBackImageIsRefusedUntouched(t *testing.T) {
 	}
 	if img.writes != writes || !bytes.Equal(img.b, before) {
 		t.Fatalf("a refused image was written to (%d writes)", img.writes-writes)
+	}
+}
+
+type constReader byte
+
+func (c constReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(c)
+	}
+	return len(p), nil
+}
+
+// TestFreeSlotEndsOnAConstantSource: with 3 free slots, 0xff is always
+// rejected (255 >= 255); a constant source must end in an error, not a hang
+// (review 2 of PR #4).
+func TestFreeSlotEndsOnAConstantSource(t *testing.T) {
+	c, _, _ := create(t, PolicyAny)
+	for c.Info().SlotsUsed < format.NumSlots-3 {
+		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.rng = constReader(0xff)
+	if _, err := c.freeSlot(); !errors.Is(err, ta1.ErrNoRand) {
+		t.Fatalf("constant source: %v", err)
 	}
 }
 

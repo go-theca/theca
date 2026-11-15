@@ -284,6 +284,32 @@ func TestLocator(t *testing.T) {
 	if len(lengths) < 100 {
 		t.Fatalf("only %d distinct lengths from a wrong key", len(lengths))
 	}
+	// The test above only sees what OpenLocator returns; an attacker reads
+	// the decrypted bytes. Under the RIGHT key, every bit that is not data
+	// must be random: the 6 non-flag bits of the flags byte take both values
+	// across sealings (review 2 of PR #4: they were always 0, a 6-bit
+	// offline test of every password guess).
+	wk := kdf.Keys(&kek)
+	orBits, andBits := byte(0), byte(0xff)
+	for i := 0; i < 256; i++ {
+		b, _ := SealLocator(&kek, loc, rand.Reader)
+		plain, err := wk.OpenUntagged(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fb := plain[1+MaxCredID+32] &^ locMask
+		orBits |= fb
+		andBits &= fb
+		if plain[0]&0x80 != 0 {
+			orBits |= 1 // also count the length byte's padding bit
+		} else {
+			andBits &^= 1
+		}
+	}
+	wk.Zeroize()
+	if orBits != 0xff&^locMask|1 || andBits != 0 {
+		t.Fatalf("padding bits constant under the right key: or %08b and %08b", orBits, andBits)
+	}
 	// The length encoding is exact at both ends.
 	for _, n := range []int{1, 128} {
 		l := &Locator{CredID: bytes.Repeat([]byte{5}, n), Flags: LocPIN2}

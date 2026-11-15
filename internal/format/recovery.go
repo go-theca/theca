@@ -70,9 +70,25 @@ func value(ch byte) (v, ok int) {
 // constant time: no early exit on the first bad character, no table lookup
 // indexed by a character, one comparison of the check symbol (review of PR
 // #4, finding 7). Only the length, which is public, ends the work early.
-func ParseRecoveryCode(s string) ([]byte, error) {
-	s = strings.NewReplacer("-", "", " ", "", "\n", "", "\t", "").Replace(s)
-	if len(s) != 33 {
+func ParseRecoveryCode(in string) ([]byte, error) {
+	// Separators are skipped into a fixed array that is wiped, not copied
+	// into a new string that cannot be (review 2 of PR #4). The caller's
+	// string itself cannot be wiped either: Go strings are immutable.
+	var s [33]byte
+	defer clear(s[:])
+	n := 0
+	for i := 0; i < len(in); i++ {
+		switch in[i] {
+		case '-', ' ', '\n', '\t':
+			continue
+		}
+		if n == len(s) {
+			return nil, ErrRecoveryCode
+		}
+		s[n] = in[i]
+		n++
+	}
+	if n != len(s) {
 		return nil, ErrRecoveryCode
 	}
 	good, sum := 1, 0

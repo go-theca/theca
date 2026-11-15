@@ -408,8 +408,12 @@ func (c *Container) freeSlot() (int, error) {
 	if len(free) == 0 {
 		return 0, ErrNoSlot
 	}
+	// Rejection sampling for an unbiased choice. A draw is rejected with
+	// probability below 1/2, so 64 rejections in a row from a working source
+	// happen with probability below 2^-64: past that the source is broken
+	// (or a caller-supplied Rand is constant) and looping would never end.
 	var b [1]byte
-	for {
+	for range 64 {
 		if _, err := io.ReadFull(c.rng, b[:]); err != nil {
 			return 0, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
 		}
@@ -417,6 +421,7 @@ func (c *Container) freeSlot() (int, error) {
 			return free[int(b[0])%len(free)], nil
 		}
 	}
+	return 0, fmt.Errorf("%w: 64 rejected draws in a row", ta1.ErrNoRand)
 }
 
 func (c *Container) writeSlot(i int, blob []byte) error {

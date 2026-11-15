@@ -89,7 +89,10 @@ func SealLocator(partner *[32]byte, loc *Locator, rng io.Reader) ([]byte, error)
 	plain[0] = plain[0]&0x80 | byte(len(loc.CredID)-1) // the top bit is random padding
 	copy(plain[1:], loc.CredID)
 	copy(plain[1+MaxCredID:], loc.Salt[:])
-	plain[1+MaxCredID+32] = loc.Flags
+	// Only the flag bits are set; the other 6 bits keep their random
+	// padding. Writing the whole byte left them at 0 in every real locator,
+	// a 6-bit test of each password guess offline (review 2 of PR #4).
+	plain[1+MaxCredID+32] = plain[1+MaxCredID+32]&^locMask | loc.Flags
 	wk := kdf.Keys(partner)
 	defer wk.Zeroize()
 	return wk.SealUntagged(plain, rng)

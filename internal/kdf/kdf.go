@@ -107,5 +107,7 @@ func Pair(a *[32]byte, kindA string, b *[32]byte, kindB string) [32]byte {
 	in = append(in, b[:]...)
 	k, _ := hkdf.Key(sha256.New, in, nil, infoPrefix+"pair/"+kindA+"+"+kindB, 32)
 	clear(in)
-	return [32]byte(k)
+	out := [32]byte(k)
+	clear(k)
+	return out
 }
