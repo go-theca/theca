@@ -1,20 +1,20 @@
 {
   "schema": 1,
-  "status": "deferred",
-  "date": "2026-11-15T20:27:30+01:00",
-  "commit": "08ad52cfeea44795149eec51d2b184f0889e33e9-dirty-1fe59829",
+  "status": "measured",
+  "date": "2026-11-15T20:32:01+01:00",
+  "commit": "1e555e3324cf6551dbf529161cc71ede1958837b",
   "repo": "go-theca/theca",
   "go_version": "go1.27.4",
-  "machine": "darwin/arm64, 16 CPUs",
+  "machine": "Apple M4 Max, darwin/arm64",
   "ref_versions": {
     "OpenSSL": "OpenSSL 3.6.4 25 Aug 2026",
     "libsodium": "1.0.22"
   },
   "max_load": 8,
   "load": {
-    "min": 0,
-    "median": 0,
-    "max": 0
+    "min": 6.01904296875,
+    "median": 6.48876953125,
+    "max": 6.89794921875
   },
   "valid": true,
   "rows": [
@@ -24,18 +24,72 @@
       "reference": "libsodium crypto_stream_xchacha20_xor",
       "parity": "exact",
       "allocs": 0,
-      "valid": false,
+      "go_iters": 45510,
+      "ref_iters": 26251,
+      "rounds": [
+        {
+          "load_before": 6.09619140625,
+          "load_after": 6.09619140625,
+          "go_first": true,
+          "go_ns": 2314.2770819600087,
+          "ref_ns": 4216.9234695821115
+        },
+        {
+          "load_before": 6.09619140625,
+          "load_after": 6.09619140625,
+          "go_first": false,
+          "go_ns": 3095.1155350472422,
+          "ref_ns": 4579.416022246772
+        },
+        {
+          "load_before": 6.09619140625,
+          "load_after": 6.09619140625,
+          "go_first": true,
+          "go_ns": 2301.7624258404744,
+          "ref_ns": 4242.505047426765
+        },
+        {
+          "load_before": 6.09619140625,
+          "load_after": 6.09619140625,
+          "go_first": false,
+          "go_ns": 2442.708569545155,
+          "ref_ns": 9362.197287722372
+        },
+        {
+          "load_before": 6.09619140625,
+          "load_after": 6.09619140625,
+          "go_first": true,
+          "go_ns": 2509.1060426279937,
+          "ref_ns": 4406.116262237629
+        },
+        {
+          "load_before": 6.09619140625,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 2342.021907273127,
+          "ref_ns": 4249.292103157975
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 2320.0963085036256,
+          "ref_ns": 4332.31751171384
+        }
+      ],
+      "valid": true,
       "go": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 2342.021907273127,
+        "q1": 2317.186695231817,
+        "q3": 2475.9073060865744
       },
       "ref": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 4332.31751171384,
+        "q1": 4245.89857529237,
+        "q3": 4492.766142242201
       },
-      "ratio": 0
+      "ratio": 0.5405933200742336,
+      "verdict": "faster"
     },
     {
       "name": "Sector/AES-256-CTR",
@@ -43,18 +97,72 @@
       "reference": "OpenSSL EVP aes-256-ctr (key schedule reused)",
       "parity": "exact",
       "allocs": 2,
-      "valid": false,
+      "go_iters": 249032,
+      "ref_iters": 348891,
+      "rounds": [
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 678.0323412252241,
+          "ref_ns": 313.2588917455595
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 601.1720702560314,
+          "ref_ns": 312.78501021809103
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 576.1153867776029,
+          "ref_ns": 311.56161093292747
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 573.7597658132288,
+          "ref_ns": 311.4227194166659
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 573.1273169713129,
+          "ref_ns": 309.56588160772276
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 578.6766359343378,
+          "ref_ns": 311.02968548916425
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 569.5581612001671,
+          "ref_ns": 316.8831124907206
+        }
+      ],
+      "valid": true,
       "go": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 576.1153867776029,
+        "q1": 573.4435413922708,
+        "q3": 589.9243530951846
       },
       "ref": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 311.56161093292747,
+        "q1": 311.2262024529151,
+        "q3": 313.0219509818253
       },
-      "ratio": 0
+      "ratio": 1.8491218640592668,
+      "verdict": "slower"
     },
     {
       "name": "Sector/Tag (HMAC-SHA-256)",
@@ -62,18 +170,72 @@
       "reference": "OpenSSL EVP_MAC HMAC-SHA256 (key reused)",
       "parity": "exact",
       "allocs": 9,
-      "valid": false,
+      "go_iters": 101568,
+      "ref_iters": 76136,
+      "rounds": [
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 1693.955852236925,
+          "ref_ns": 1458.3650835347273
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 1698.4819628229363,
+          "ref_ns": 1454.077243353998
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 1704.007000236295,
+          "ref_ns": 1430.0358306188925
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 1689.3103635003151,
+          "ref_ns": 1448.0173636650204
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": true,
+          "go_ns": 1680.3106490233145,
+          "ref_ns": 1454.038391825155
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.48876953125,
+          "go_first": false,
+          "go_ns": 1680.7274436830498,
+          "ref_ns": 1449.1053246821477
+        },
+        {
+          "load_before": 6.48876953125,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 1689.8974086326402,
+          "ref_ns": 1462.0821030787013
+        }
+      ],
+      "valid": true,
       "go": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 1689.8974086326402,
+        "q1": 1685.0189035916824,
+        "q3": 1696.2189075299307
       },
       "ref": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 1454.038391825155,
+        "q1": 1448.561344173584,
+        "q3": 1456.2211634443627
       },
-      "ratio": 0
+      "ratio": 1.162209621240762,
+      "verdict": "slower"
     },
     {
       "name": "Sector/Seal",
@@ -81,18 +243,72 @@
       "reference": "libsodium + OpenSSL, same composition",
       "parity": "exact",
       "allocs": 12,
-      "valid": false,
+      "go_iters": 37708,
+      "ref_iters": 18493,
+      "rounds": [
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4677.853505887345,
+          "ref_ns": 5968.634510355269
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": false,
+          "go_ns": 4622.252996711573,
+          "ref_ns": 5947.115124641757
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4596.405272090803,
+          "ref_ns": 5968.650300113556
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": false,
+          "go_ns": 4632.685133128249,
+          "ref_ns": 5995.408208511329
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4661.457780842262,
+          "ref_ns": 5954.363380738658
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": false,
+          "go_ns": 4624.41879707224,
+          "ref_ns": 5984.525658357216
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4596.691471305824,
+          "ref_ns": 5953.525225761099
+        }
+      ],
+      "valid": true,
       "go": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 4624.41879707224,
+        "q1": 4609.472234008699,
+        "q3": 4647.071456985255
       },
       "ref": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 5968.634510355269,
+        "q1": 5953.944303249878,
+        "q3": 5976.587979235386
       },
-      "ratio": 0
+      "ratio": 0.7747867270225902,
+      "verdict": "faster"
     },
     {
       "name": "Sector/Open",
@@ -100,18 +316,72 @@
       "reference": "libsodium + OpenSSL, same composition",
       "parity": "exact",
       "allocs": 11,
-      "valid": false,
+      "go_iters": 41904,
+      "ref_iters": 18285,
+      "rounds": [
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4704.5747422680415,
+          "ref_ns": 6030.571506699481
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": false,
+          "go_ns": 4672.090778923253,
+          "ref_ns": 6019.421657095981
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4690.488974799542,
+          "ref_ns": 6055.931528575335
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": false,
+          "go_ns": 5201.72298587247,
+          "ref_ns": 6429.748865190047
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": true,
+          "go_ns": 4613.036154066437,
+          "ref_ns": 6012.4669401148485
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.369140625,
+          "go_first": false,
+          "go_ns": 4615.283361970218,
+          "ref_ns": 5988.950396499863
+        },
+        {
+          "load_before": 6.369140625,
+          "load_after": 6.01904296875,
+          "go_first": true,
+          "go_ns": 4646.641728713249,
+          "ref_ns": 6049.6445173639595
+        }
+      ],
+      "valid": true,
       "go": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 4672.090778923253,
+        "q1": 4630.962545341734,
+        "q3": 4697.531858533792
       },
       "ref": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 6030.571506699481,
+        "q1": 6015.944298605415,
+        "q3": 6052.7880229696475
       },
-      "ratio": 0
+      "ratio": 0.7747343305245508,
+      "verdict": "faster"
     },
     {
       "name": "Argon2id/t3-m64MiB-p1",
@@ -119,18 +389,72 @@
       "reference": "libsodium crypto_pwhash ARGON2ID13",
       "parity": "exact",
       "allocs": 31,
-      "valid": false,
+      "go_iters": 2,
+      "ref_iters": 2,
+      "rounds": [
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": true,
+          "go_ns": 101757917,
+          "ref_ns": 65553875
+        },
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": false,
+          "go_ns": 95958812.5,
+          "ref_ns": 68866479
+        },
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": true,
+          "go_ns": 95043667,
+          "ref_ns": 66569896
+        },
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": false,
+          "go_ns": 96258312.5,
+          "ref_ns": 66292354
+        },
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": true,
+          "go_ns": 98398729,
+          "ref_ns": 66222250
+        },
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": false,
+          "go_ns": 95128166.5,
+          "ref_ns": 66702521
+        },
+        {
+          "load_before": 6.89794921875,
+          "load_after": 6.89794921875,
+          "go_first": true,
+          "go_ns": 96456875,
+          "ref_ns": 66411041.5
+        }
+      ],
+      "valid": true,
       "go": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 96258312.5,
+        "q1": 95543489.5,
+        "q3": 97427802
       },
       "ref": {
-        "median": 0,
-        "q1": 0,
-        "q3": 0
+        "median": 66411041.5,
+        "q1": 66257302,
+        "q3": 66636208.5
       },
-      "ratio": 0
+      "ratio": 1.449432358322524,
+      "verdict": "slower"
     }
   ]
 }
