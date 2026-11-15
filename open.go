@@ -3,6 +3,7 @@ package theca
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 
@@ -18,44 +19,64 @@ import (
 // under the partner's KEK (decision H2): every slot is decrypted as a
 // locator under each partner, and the key is asked about each candidate. The
 // key, not a tag, says which one is real.
-func collectFactors(ctx context.Context, u *Unlock, salt []byte, table [format.NumSlots][]byte) ([]Factor, error) {
-	var fs []Factor
+//
+// On error every factor already derived is wiped. Duplicate key answers are
+// recognised by comparing derived KEKs, never by keeping the raw secret as a
+// map key, because a Go string cannot be wiped (review of PR #4, finding 5).
+func collectFactors(ctx context.Context, u *Unlock, salt []byte, table [format.NumSlots][]byte) (fs []Factor, err error) {
+	defer func() {
+		if err != nil {
+			for i := range fs {
+				fs[i].Zeroize()
+			}
+			fs = nil
+		}
+	}()
 	if len(u.Password) > 0 {
 		pw, err := PasswordFactor(u.Hint, u.Password, salt)
 		if err != nil {
-			return nil, err
+			return fs, err
 		}
 		fs = append(fs, pw)
 	}
 	if u.Recovery != "" {
 		rc, err := RecoveryFactor(u.Recovery)
 		if err != nil {
-			return nil, err
+			return fs, err
 		}
 		fs = append(fs, rc)
 	}
-	if u.FIDO != nil {
-		partners := append([]Factor(nil), fs...)
-		seen := map[string]bool{}
-		for _, p := range partners {
-			for i := 0; i < format.NumSlots; i++ {
-				loc, ok := format.OpenLocator(&p.KEK, table[i])
-				if !ok {
-					continue
-				}
-				secret, err := u.FIDO.Derive(ctx, loc)
-				if errors.Is(err, ErrNoCredential) {
-					continue
-				}
-				if err != nil {
-					return nil, err
-				}
-				if k := string(secret); !seen[k] {
-					seen[k] = true
-					fs = append(fs, FIDO2Factor(secret))
-				}
-				clear(secret)
+	if u.FIDO == nil {
+		return fs, nil
+	}
+	// The partners are the factors collected so far; they are indexed, not
+	// copied, so no extra copy of a KEK is left behind.
+	np := len(fs)
+	for pi := 0; pi < np; pi++ {
+		for i := 0; i < format.NumSlots; i++ {
+			// ok is false only for a blob of the wrong size, and Open
+			// reads every slot at exactly SlotSize.
+			loc, _ := format.OpenLocator(&fs[pi].KEK, table[i])
+			secret, err := u.FIDO.Derive(ctx, loc)
+			if errors.Is(err, ErrNoCredential) {
+				continue
 			}
+			if err != nil {
+				return fs, err
+			}
+			k := FIDO2Factor(secret)
+			clear(secret)
+			dup := false
+			for j := np; j < len(fs); j++ {
+				if subtle.ConstantTimeCompare(fs[j].KEK[:], k.KEK[:]) == 1 {
+					dup = true
+				}
+			}
+			if dup {
+				k.Zeroize()
+				continue
+			}
+			fs = append(fs, k)
 		}
 	}
 	return fs, nil
@@ -145,11 +166,19 @@ func Open(ctx context.Context, f Backing, u Unlock, o OpenOptions) (*Container, 
 	c := &Container{f: f, rng: randOr(o.Rand), geo: geo, body: *body, k: ms,
 		meta: map[uint64]*[4096]byte{}, dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
 	c.tree = merkle.New(ms, geo.Shape, body.Root, nodeStore{c})
+	// The counter decides BEFORE anything is written: a rolled-back image
+	// must be refused untouched, not first moved forward by a journal replay
+	// (review of PR #4, finding 4).
+	gate, err := c.checkCounter(o)
+	if err != nil {
+		ms.Zeroize()
+		return nil, err
+	}
 	if err := c.recover(); err != nil {
 		ms.Zeroize()
 		return nil, err
 	}
-	if err := c.bindCounter(o); err != nil {
+	if err := c.bindCounter(o.Counter, gate); err != nil {
 		ms.Zeroize()
 		return nil, err
 	}
@@ -187,37 +216,64 @@ func (c *Container) recover() error {
 	if err := c.writeHeader(); err != nil {
 		return err
 	}
-	c.info.ReplayedTransation = true
+	c.info.ReplayedTransaction = true
 	return c.f.Sync()
 }
 
-// bindCounter runs the mount protocol of DESIGN 5.4 against the hardware
-// counter, if the header names one.
-func (c *Container) bindCounter(o OpenOptions) error {
+// counterGate is the decision checkCounter took, applied by bindCounter.
+type counterGate struct {
+	bound  bool   // the header names a counter
+	finish bool   // b == c+1: an earlier mount crashed before its increment
+	base   uint64 // the counter value once any unfinished increment is done
+}
+
+// checkCounter runs the read-only half of the mount protocol of DESIGN 5.4:
+// it identifies the counter, reads it and accepts or refuses. It writes
+// nothing, to the backing or to the counter.
+func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 	b := c.body.Counter
 	if b == nil {
-		return nil // "rollback-unprotected": Info.RollbackProtected is false
+		return counterGate{}, nil // "rollback-unprotected": Info.RollbackProtected is false
 	}
 	ctr := o.Counter
 	if ctr == nil || ctr.Handle() != b.Handle || !bytes.Equal(ctr.Name(), b.Name) {
-		return ErrCounter
+		return counterGate{}, ErrCounter
 	}
 	cur, err := ctr.Read()
 	if err != nil {
-		return err
+		return counterGate{}, err
 	}
 	switch {
-	case b.Bound == cur+1:
-		// Crash between the header write and the increment: finish it.
-		return ctr.Increment()
-	case b.Bound == cur:
-	case o.AcceptRollback:
-	default:
-		return ErrRollback
+	case cur < ^uint64(0) && b.Bound == cur+1:
+		return counterGate{bound: true, finish: true, base: cur + 1}, nil
+	case b.Bound == cur, o.AcceptRollback:
+		return counterGate{bound: true, base: cur}, nil
 	}
-	c.body.Counter = &format.Counter{Handle: b.Handle, Name: b.Name, Bound: cur + 1}
+	return counterGate{}, ErrRollback
+}
+
+// bindCounter runs the writing half of the mount protocol: finish an
+// unfinished increment if there is one, then rebind the header to base+1
+// and increment. The rebind is done in the b == c+1 case too (review of PR
+// #4, finding 2): otherwise this session would leave the counter equal to
+// the bound written by the crashed one, and an image copied during that
+// crashed session would still be accepted at the next mount.
+func (c *Container) bindCounter(ctr Counter, g counterGate) error {
+	if !g.bound {
+		return nil
+	}
+	if g.finish {
+		if err := ctr.Increment(); err != nil {
+			return err
+		}
+	}
+	if g.base == ^uint64(0) {
+		return fmt.Errorf("%w: counter exhausted", ErrCounter)
+	}
+	b := c.body.Counter
+	c.body.Counter = &format.Counter{Handle: b.Handle, Name: b.Name, Bound: g.base + 1}
 	c.mu.Lock()
-	err = c.commitLocked("bind counter")
+	err := c.commitLocked("bind counter")
 	c.mu.Unlock()
 	if err != nil {
 		return err

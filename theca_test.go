@@ -246,12 +246,14 @@ func TestWrongFactors(t *testing.T) {
 type fakeKey struct {
 	creds   map[string][]byte
 	derives int
+	enrolls int // every Enroll is a touch on a real key
 	failErr error
 }
 
 func newKey() *fakeKey { return &fakeKey{creds: map[string][]byte{}} }
 
 func (k *fakeKey) Enroll(context.Context) (Locator, []byte, error) {
+	k.enrolls++
 	loc := Locator{CredID: rnd(64), Flags: format.LocUV}
 	rand.Read(loc.Salt[:])
 	cr := rnd(32)
@@ -386,11 +388,15 @@ func TestSlotManagement(t *testing.T) {
 	if err := c.RemoveSlot(rcSlot); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.RemoveSlot(rcSlot); !errors.Is(err, ErrOption) {
-		t.Fatal("removing a free slot")
+	// Removing a free slot scrubs it again and records nothing.
+	epoch := c.Info().Epoch
+	if err := c.RemoveSlot(rcSlot); err != nil || c.Info().Epoch != epoch {
+		t.Fatalf("removing a free slot: %v, epoch %d -> %d", err, epoch, c.Info().Epoch)
 	}
-	if err := c.RemoveSlot(99); !errors.Is(err, ErrOption) {
-		t.Fatal("slot out of range")
+	for _, i := range []int{-1, 16, 99} {
+		if err := c.RemoveSlot(i); !errors.Is(err, ErrOption) {
+			t.Fatalf("slot %d out of range: %v", i, err)
+		}
 	}
 	c.Close()
 	if _, err := Open(ctx, f, Unlock{Recovery: code}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
@@ -575,7 +581,7 @@ func TestJournalReplay(t *testing.T) {
 		c.Sync()
 		img.failAfter = -1
 		r := reopen(t, img, pwUnlock())
-		if r.Info().ReplayedTransation {
+		if r.Info().ReplayedTransaction {
 			replayed = true
 			m2.check(t, r) // the journal made the commit whole
 		}
@@ -600,7 +606,7 @@ func TestOldJournalIsNotReplayed(t *testing.T) {
 	c.Close()
 	copy(f.b[geo.JournalOff:], oldJournal)
 	r := reopen(t, f, pwUnlock())
-	if r.Info().ReplayedTransation {
+	if r.Info().ReplayedTransaction {
 		t.Fatal("an old transaction was replayed")
 	}
 	m.check(t, r)
@@ -1131,7 +1137,7 @@ func TestIOErrorsAreNeverSwallowed(t *testing.T) {
 		img.failAfter = img.writes + cut
 		cc.Sync()
 		img.failAfter = -1
-		if probe := reopen(t, img.clone(), pwUnlock()); probe.Info().ReplayedTransation {
+		if probe := reopen(t, img.clone(), pwUnlock()); probe.Info().ReplayedTransaction {
 			crashed = img
 		}
 	}
@@ -1243,14 +1249,20 @@ func TestEnrollAndLocatorRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// One free slot left: the pairwise slot fits, its locator does not.
-	if err := c.EnrollFIDO2(ctx, newKey(), Factor{Kind: "pw"}); !errors.Is(err, ErrNoSlot) {
-		t.Fatalf("locator without a free slot: %v", err)
+	// One free slot left: the pairwise slot would fit, its locator would
+	// not. The enrolment is refused whole, before the key is touched, and
+	// the last slot stays free.
+	k := newKey()
+	if err := c.EnrollFIDO2(ctx, k, Factor{Kind: "pw"}); !errors.Is(err, ErrNoSlot) || k.enrolls != 0 {
+		t.Fatalf("enrolment without room: %v after %d touches", err, k.enrolls)
+	}
+	if c.Info().SlotsUsed != format.NumSlots-1 {
+		t.Fatalf("a refused enrolment used slots: %d", c.Info().SlotsUsed)
+	}
+	if err := c.AddLocator(Factor{}, Locator{CredID: []byte{1}}); err != nil {
+		t.Fatal(err)
 	}
 	// Now there is none at all.
-	if err := c.EnrollFIDO2(ctx, newKey(), Factor{Kind: "pw"}); !errors.Is(err, ErrNoSlot) {
-		t.Fatalf("slot without a free slot: %v", err)
-	}
 	if err := c.AddLocator(Factor{}, Locator{CredID: []byte{1}}); !errors.Is(err, ErrNoSlot) {
 		t.Fatalf("%v", err)
 	}

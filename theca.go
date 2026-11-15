@@ -184,13 +184,13 @@ type Unlock struct {
 
 // Info describes an open container.
 type Info struct {
-	Sectors            uint64
-	Size               uint64
-	Epoch              uint64
-	SlotsUsed          int
-	RollbackProtected  bool
-	JournalEntries     uint32
-	ReplayedTransation bool
+	Sectors             uint64
+	Size                uint64
+	Epoch               uint64
+	SlotsUsed           int
+	RollbackProtected   bool
+	JournalEntries      uint32
+	ReplayedTransaction bool
 }
 
 // Container is an open container. It is safe for concurrent use.
@@ -256,7 +256,7 @@ func fillRandom(f Backing, size uint64, rng io.Reader) error {
 
 // Create formats a new container in f. It returns the container and, for
 // both policies, the printed recovery code (shown once, never stored).
-func Create(f Backing, o CreateOptions) (*Container, string, error) {
+func Create(f Backing, o CreateOptions) (c *Container, printed string, err error) {
 	rng := randOr(o.Rand)
 	jn := o.JournalEntries
 	if jn == 0 {
@@ -282,6 +282,11 @@ func Create(f Backing, o CreateOptions) (*Container, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	defer func() {
+		if err != nil {
+			ms.Zeroize() // review of PR #4, finding 5
+		}
+	}()
 	var cid [16]byte
 	var salt [format.SaltSize]byte
 	if _, err := io.ReadFull(rng, cid[:]); err != nil {
@@ -313,7 +318,7 @@ func Create(f Backing, o CreateOptions) (*Container, string, error) {
 		return nil, "", err
 	}
 
-	c := &Container{f: f, rng: rng, geo: geo, k: ms,
+	c = &Container{f: f, rng: rng, geo: geo, k: ms,
 		meta: map[uint64]*[4096]byte{}, dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
 	c.body = format.Body{CID: cid, Sectors: o.Sectors, JournalEntries: jn,
 		Root: merkle.EmptyRoot(ms, geo.Shape)}
@@ -326,8 +331,14 @@ func Create(f Backing, o CreateOptions) (*Container, string, error) {
 	case PolicyTwoOfThree:
 		specs = [][]Factor{{pw, rc}}
 	}
+	// No header exists yet, so the order of slot and header writes does not
+	// matter here: a crash leaves something that is not a container.
 	for _, s := range specs {
-		if err := c.putSlot(s); err != nil {
+		p, err := c.sealSlot(s)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := c.writeSlot(p.i, p.blob); err != nil {
 			return nil, "", err
 		}
 	}
@@ -381,14 +392,19 @@ func (c *Container) fillInfo() {
 	c.info.RollbackProtected = c.body.Counter != nil
 }
 
-// freeSlot picks a random unused slot index.
-func (c *Container) freeSlot() (int, error) {
+func (c *Container) freeSlots() []int {
 	var free []int
 	for i := 0; i < format.NumSlots; i++ {
 		if c.body.SlotsUsed&(1<<i) == 0 {
 			free = append(free, i)
 		}
 	}
+	return free
+}
+
+// freeSlot picks a random unused slot index.
+func (c *Container) freeSlot() (int, error) {
+	free := c.freeSlots()
 	if len(free) == 0 {
 		return 0, ErrNoSlot
 	}
@@ -408,26 +424,65 @@ func (c *Container) writeSlot(i int, blob []byte) error {
 	return err
 }
 
-// putSlot writes a wrap slot for the factors and marks it used in the body
-// (the header write that records it is the caller's).
-func (c *Container) putSlot(fs []Factor) error {
+// pendingSlot is a sealed slot whose index is reserved in the body but whose
+// bytes are not on disk yet.
+type pendingSlot struct {
+	i    int
+	blob []byte
+}
+
+// sealSlot seals a wrap slot for the factors into a free index and reserves
+// that index in the body. Nothing is written.
+func (c *Container) sealSlot(fs []Factor) (pendingSlot, error) {
 	kek, err := slotKEK(fs)
 	if err != nil {
-		return err
+		return pendingSlot{}, err
 	}
 	defer clear(kek[:])
 	i, err := c.freeSlot()
 	if err != nil {
-		return err
+		return pendingSlot{}, err
 	}
 	blob, err := format.SealWrap(c.k, &kek, i, c.rng)
 	if err != nil {
-		return err
-	}
-	if err := c.writeSlot(i, blob); err != nil {
-		return err
+		return pendingSlot{}, err
 	}
 	c.body.SlotsUsed |= 1 << i
+	return pendingSlot{i, blob}, nil
+}
+
+// sealLocator seals a FIDO2 locator under the partner's KEK into a free
+// index and reserves it.
+func (c *Container) sealLocator(partner *Factor, loc *Locator) (pendingSlot, error) {
+	i, err := c.freeSlot()
+	if err != nil {
+		return pendingSlot{}, err
+	}
+	blob, err := format.SealLocator(&partner.KEK, loc, c.rng)
+	if err != nil {
+		return pendingSlot{}, err
+	}
+	c.body.SlotsUsed |= 1 << i
+	return pendingSlot{i, blob}, nil
+}
+
+// publishLocked records the reserved slots in the header (one commit), and
+// only then writes their bytes. A crash in between leaves a slot that is
+// recorded but holds random bytes: harmless, and RemoveSlot clears it.
+// The opposite order would leave a working slot the header does not record,
+// which nothing could list or remove (review of PR #4, finding 3).
+func (c *Container) publishLocked(why string, ps []pendingSlot) error {
+	if err := c.commitLocked(why); err != nil {
+		return err
+	}
+	for _, p := range ps {
+		if err := c.writeSlot(p.i, p.blob); err != nil {
+			return c.fail(err)
+		}
+	}
+	if err := c.f.Sync(); err != nil {
+		return c.fail(err)
+	}
 	return nil
 }
 
@@ -449,10 +504,13 @@ func (c *Container) AddSlot(fs ...Factor) error {
 	if err := c.usable(); err != nil {
 		return err
 	}
-	if err := c.putSlot(fs); err != nil {
+	saved := c.body.SlotsUsed
+	p, err := c.sealSlot(fs)
+	if err != nil {
+		c.body.SlotsUsed = saved
 		return err
 	}
-	return c.commitLocked("add slot")
+	return c.publishLocked("add slot", []pendingSlot{p})
 }
 
 // AddLocator stores a FIDO2 locator sealed under the partner factor's KEK
@@ -463,41 +521,38 @@ func (c *Container) AddLocator(partner Factor, loc Locator) error {
 	if err := c.usable(); err != nil {
 		return err
 	}
-	i, err := c.freeSlot()
+	saved := c.body.SlotsUsed
+	p, err := c.sealLocator(&partner, &loc)
 	if err != nil {
+		c.body.SlotsUsed = saved
 		return err
 	}
-	blob, err := format.SealLocator(&partner.KEK, &loc, c.rng)
-	if err != nil {
-		return err
-	}
-	if err := c.writeSlot(i, blob); err != nil {
-		return err
-	}
-	c.body.SlotsUsed |= 1 << i
-	return c.commitLocked("add locator")
+	return c.publishLocked("add locator", []pendingSlot{p})
 }
 
-// RemoveSlot overwrites a slot with random bytes. It only stops access to
-// the CURRENT container: anyone holding an older copy can still open that
-// copy with the revoked factor, because the master secret does not change
-// (DESIGN 2, review finding R7). Callers must tell the user.
+// RemoveSlot overwrites slot i with random bytes, then records it as free.
+// Any index 0..15 is accepted, recorded or not, so that a working slot the
+// header does not record (left by a crash in an older version, or written
+// by another tool) can still be destroyed. The overwrite comes first: a
+// crash in between leaves a recorded slot holding random bytes, never a
+// working slot marked free (review of PR #4, finding 3).
+//
+// It only stops access to the CURRENT container: anyone holding an older
+// copy can still open that copy with the revoked factor, because the master
+// secret does not change (DESIGN 2, review finding R7). Callers must tell
+// the user.
 func (c *Container) RemoveSlot(i int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.usable(); err != nil {
 		return err
 	}
-	if i < 0 || i >= format.NumSlots || c.body.SlotsUsed&(1<<i) == 0 {
-		return fmt.Errorf("%w: slot %d is not in use", ErrOption, i)
-	}
-	c.body.SlotsUsed &^= 1 << i
-	if err := c.commitLocked("remove slot"); err != nil {
-		return err
+	if i < 0 || i >= format.NumSlots {
+		return fmt.Errorf("%w: slot %d out of range", ErrOption, i)
 	}
 	junk, err := format.RandomSlot(c.rng)
 	if err != nil {
-		return c.fail(err)
+		return err
 	}
 	if err := c.writeSlot(i, junk); err != nil {
 		return c.fail(err)
@@ -505,17 +560,34 @@ func (c *Container) RemoveSlot(i int) error {
 	if err := c.f.Sync(); err != nil {
 		return c.fail(err)
 	}
-	return nil
+	if c.body.SlotsUsed&(1<<i) == 0 {
+		return nil
+	}
+	c.body.SlotsUsed &^= 1 << i
+	return c.commitLocked("remove slot")
 }
 
 // EnrollFIDO2 enrols a hardware key paired with each of the given partner
 // factors: for every partner it adds the pairwise slot {partner, key} and a
-// locator sealed under the partner's KEK. Enrolment needs the master secret,
-// so the container must already be open.
+// locator sealed under the partner's KEK, all recorded by ONE commit.
+// Enrolment needs the master secret, so the container must already be open.
+// The container and its free slots are checked before the key is asked, so a
+// touch is never spent on an enrolment that cannot be stored (review of PR
+// #4, finding 6).
 func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Factor) error {
 	if len(partners) == 0 {
 		return fmt.Errorf("%w: a key needs at least one partner factor", ErrOption)
 	}
+	c.mu.Lock()
+	err := c.usable()
+	if err == nil && len(c.freeSlots()) < 2*len(partners) {
+		err = ErrNoSlot
+	}
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// The lock is not held while the key waits for a touch.
 	loc, secret, err := dev.Enroll(ctx)
 	if err != nil {
 		return err
@@ -523,15 +595,28 @@ func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Fact
 	defer clear(secret)
 	key := FIDO2Factor(secret)
 	defer key.Zeroize()
-	for _, p := range partners {
-		if err := c.AddSlot(p, key); err != nil {
-			return err
-		}
-		if err := c.AddLocator(p, loc); err != nil {
-			return err
-		}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.usable(); err != nil {
+		return err
 	}
-	return nil
+	saved := c.body.SlotsUsed
+	var ps []pendingSlot
+	for i := range partners {
+		w, err := c.sealSlot([]Factor{partners[i], key})
+		if err != nil {
+			c.body.SlotsUsed = saved
+			return err
+		}
+		l, err := c.sealLocator(&partners[i], &loc)
+		if err != nil {
+			c.body.SlotsUsed = saved
+			return err
+		}
+		ps = append(ps, w, l)
+	}
+	return c.publishLocked("enrol fido2", ps)
 }
 
 func (c *Container) usable() error {

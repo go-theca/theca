@@ -391,14 +391,67 @@ func FuzzOpenLocator(f *testing.F) {
 	})
 }
 
+// referenceParse is the straightforward parser (upper-case, table lookups,
+// encoding/base32) that the constant-time one must agree with exactly.
+func referenceParse(s string) ([]byte, bool) {
+	s = strings.ToUpper(strings.NewReplacer("-", "", " ", "", "\n", "", "\t", "").Replace(s))
+	if len(s) != 33 {
+		return nil, false
+	}
+	sum := 0
+	for i := 0; i < 33; i++ {
+		v := strings.IndexByte(alphabet, s[i])
+		if v < 0 {
+			return nil, false
+		}
+		if i < 32 {
+			sum += (2*i + 1) * v
+		}
+	}
+	if alphabet[sum%32] != s[32] {
+		return nil, false
+	}
+	raw, err := b32.DecodeString(s[:32])
+	return raw, err == nil
+}
+
+func TestRecoveryCodeMatchesReference(t *testing.T) {
+	for n := 0; n < 2000; n++ {
+		raw, printed, err := NewRecoveryCode(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := ParseRecoveryCode(printed)
+		if err != nil || !bytes.Equal(got, raw) {
+			t.Fatalf("%q: %v", printed, err)
+		}
+	}
+	// Every byte value in every position: accepted exactly when the
+	// reference accepts, with the same bytes.
+	_, printed, _ := NewRecoveryCode(rand.Reader)
+	plain := strings.ReplaceAll(printed, "-", "")
+	for i := 0; i < 33; i++ {
+		for c := 0; c < 256; c++ {
+			s := plain[:i] + string([]byte{byte(c)}) + plain[i+1:]
+			got, err := ParseRecoveryCode(s)
+			want, ok := referenceParse(s)
+			if (err == nil) != ok || !bytes.Equal(got, want) {
+				t.Fatalf("position %d byte %#x: got %x %v, reference %x %v", i, c, got, err, want, ok)
+			}
+		}
+	}
+}
+
 func FuzzParseRecoveryCode(f *testing.F) {
 	_, printed, _ := NewRecoveryCode(bytes.NewReader(make([]byte, 20)))
 	f.Add(printed)
+	f.Add(strings.ToLower(printed))
 	f.Add("")
 	f.Fuzz(func(t *testing.T, s string) {
 		raw, err := ParseRecoveryCode(s)
-		if err == nil && len(raw) != RecoveryBytes {
-			t.Fatal("accepted code of the wrong length")
+		want, ok := referenceParse(s)
+		if (err == nil) != ok || !bytes.Equal(raw, want) {
+			t.Fatalf("%q: got %x %v, reference %x %v", s, raw, err, want, ok)
 		}
 	})
 }
