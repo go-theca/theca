@@ -1,13 +1,5 @@
 # Changelog
 
-## v0.4.1
-
-- go-fileshare/automount v0.1.1 (go-freedesktop/gvfs v0.1.1): on Linux, when
-  gvfs-fuse does not serve the session, `serve --mount` and `share.MountPath`
-  no longer report `/` (the host's root) as the mount path; they report the
-  share's URI. Measured live on Linux (Ubuntu 24.04, gvfs 1.54.4) and Windows
-  11 by automount itself; not yet with theca.
-
 ## v0.5.0
 
 - `serve --network` / `share.Options.Network`: serve beyond loopback, with
@@ -20,6 +12,14 @@
   added.
 - go-filesystems/smb v0.15.0: replay window, session-hijack fix, connection and
   pre-auth bounds, `RequireSigning`, `EncryptData`.
+
+## v0.4.1
+
+- go-fileshare/automount v0.1.1 (go-freedesktop/gvfs v0.1.1): on Linux, when
+  gvfs-fuse does not serve the session, `serve --mount` and `share.MountPath`
+  no longer report `/` (the host's root) as the mount path; they report the
+  share's URI. Measured live on Linux (Ubuntu 24.04, gvfs 1.54.4) and Windows
+  11 by automount itself; not yet with theca.
 
 ## v0.4.0
 
