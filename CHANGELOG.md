@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `create --fs exfat`: the volume is formatted through the container itself.
+- `serve`: the exFAT inside is served over SMB on loopback, with one random
+  account, committed every `--sync` and at stop.
+- `serve --mount`: the share is mounted in the file manager (Finder, GNOME
+  Files, Explorer) with no password dialog, through go-fileshare/automount, and
+  unmounted at stop. `--credentials-out` is no longer required when `--mount`
+  is given.
+- go-filesystems/smb v0.13.0: SMB 3.1.1 (pre-authentication integrity,
+  AES-GMAC signing) and encryption.
+
 ## v0.1.0
 
 The first release. The format may still change before v1 (below v1, a
