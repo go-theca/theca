@@ -11,8 +11,8 @@ github.com/geoffgarside/ber v1.1.0 h1:qTmFG4jJbwiSzSXoNJeHcOprVzZ8Ulde2Rrrifu5U9
 github.com/geoffgarside/ber v1.1.0/go.mod h1:jVPKeCbj6MvQZhwLYsGwaGI52oUorHoHKNecGT85ZCc=
 github.com/go-authn/fido v0.9.0 h1:o9NvY1vpINX0rgpR/ZVBN5KlFkcts1BZ/7nq35h+BSc=
 github.com/go-authn/fido v0.9.0/go.mod h1:EnseUqvvwzHnj7W6occN/5ySFfofWdJHJqcE2UHDDaA=
-github.com/go-fileshare/automount v0.1.0 h1:TWf7QgYNadG1T8MrPPI8B+HPZ7BzowxLwZVsDVafj2Q=
-github.com/go-fileshare/automount v0.1.0/go.mod h1:ELsYfaejRQUR4nM4VSJ1023/l3dVTTsS11BxO+J6FGM=
+github.com/go-fileshare/automount v0.1.1 h1:Sm2ELnwLkHBCJb1BvycEU1RuRAm2EjmdCNc+LlkOArw=
+github.com/go-fileshare/automount v0.1.1/go.mod h1:5Shh64ihIDXkx0vxRRqFTIKp9DRw47wYd97amJzZHBI=
 github.com/go-filesystems/exfat v0.7.0 h1:i7qbWLrSMTM6Tc7r20bim7Q853cqftFWLU7FnH1iuv4=
 github.com/go-filesystems/exfat v0.7.0/go.mod h1:K/h8aK3rot2xoJ0QAY8plGOiJFciBs6ikIPvRdcP9oU=
 github.com/go-filesystems/hostcopy v0.1.0 h1:eNOy7iGrEe7dGZQ+UhnXJraZsnT+Ht3pP3OIWy69Wq0=
@@ -25,8 +25,8 @@ github.com/go-filesystems/kerneljudge v0.3.1 h1:XEzYYvR1V8PYfZ5BwR8YJjvkvaYgOHac
 github.com/go-filesystems/kerneljudge v0.3.1/go.mod h1:SK6ri2WMRBATCd+RUhsOn+gLCy+F41a1VGebjQECZgs=
 github.com/go-filesystems/smb v0.13.0 h1:sOqp6GLyH2U4ZpEqRPRcSuAr7Kv0YSFISNVpanXqE2k=
 github.com/go-filesystems/smb v0.13.0/go.mod h1:0tst9r4AXFO7lU29kKjDVi8wEl1hIOCwzexq90hmNBg=
-github.com/go-freedesktop/gvfs v0.1.0 h1:DgjiU5kBxPUafKJdTKryNp7EvocAfQoqiJrUODmN6t8=
-github.com/go-freedesktop/gvfs v0.1.0/go.mod h1:/2thANqVEah4mNw2WYi9oSTwjI2+GBLpxcXyikC+Ers=
+github.com/go-freedesktop/gvfs v0.1.1 h1:mzp3qJq9qucK3eFeJMLuImpbXlS/cgxP41wnHBEIcpc=
+github.com/go-freedesktop/gvfs v0.1.1/go.mod h1:/2thANqVEah4mNw2WYi9oSTwjI2+GBLpxcXyikC+Ers=
 github.com/go-macos/fido v0.5.2 h1:isRgU81f8G/duQ79yaKYe1rP5+dmf48oE0NBLaep70o=
 github.com/go-macos/fido v0.5.2/go.mod h1:v4YtWlKHqP6rBPaC48fS3CrMhrsD4XgWUAwHAI4qmr4=
 github.com/go-macos/iokit v0.14.0 h1:TVwBDbHSvCoJ+LgLQODLcTAJmwebDmf0bZ9LDsOvXZ0=
