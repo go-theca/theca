@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/go-authn/fido v0.9.0
-	github.com/go-fileshare/automount v0.1.0
+	github.com/go-fileshare/automount v0.1.1
 	github.com/go-filesystems/exfat v0.7.0
 	github.com/go-filesystems/smb v0.13.0
 	github.com/go-macos/fido v0.5.2
@@ -19,7 +19,7 @@ require (
 	github.com/go-filesystems/hostcopy v0.1.0 // indirect
 	github.com/go-filesystems/inflight v0.2.0 // indirect
 	github.com/go-filesystems/interface v0.6.0 // indirect
-	github.com/go-freedesktop/gvfs v0.1.0 // indirect
+	github.com/go-freedesktop/gvfs v0.1.1 // indirect
 	github.com/go-macos/iokit v0.14.0 // indirect
 	github.com/go-macos/netfs v0.1.0 // indirect
 	github.com/go-macos/objc v0.12.0 // indirect
