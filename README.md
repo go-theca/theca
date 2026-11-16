@@ -12,7 +12,8 @@ The design, its threat model, the primary sources it rests on and the
 decisions taken are in [docs/DESIGN.md](docs/DESIGN.md). Hardware keys are
 covered in [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md).
 
-Status: pre-release (v0.1 in progress). The format can still change.
+Status: v0.1.0 released ([CHANGELOG](CHANGELOG.md)). Below v1 the format can
+still change: a breaking change bumps the minor version.
 
 ## Command line
 
