@@ -135,6 +135,9 @@ err = s.Stop() // unmount, close the server, close the filesystem (idempotent)
 c.Close()      // the caller closes the container, after Stop
 ```
 
+`share.Format(c)` makes a fresh container shareable: it lays exFAT onto the
+volume through the container (what `create --fs exfat` does).
+
 Only a loopback address is served. `Password()` exists to hand the account to
 another client; it is a secret, never to be shown or logged.
 

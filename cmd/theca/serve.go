@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	exfat "github.com/go-filesystems/exfat"
 	"github.com/spf13/cobra"
 
 	"github.com/go-theca/theca"
@@ -31,11 +30,7 @@ func formatFS(c *theca.Container, kind string) error {
 	if kind != "exfat" {
 		return nil
 	}
-	fsys, err := exfat.FormatImage(c, c.Size(), exfat.FormatConfig{Label: "THECA"})
-	if err != nil {
-		return err
-	}
-	return fsys.Close()
+	return share.Format(c)
 }
 
 // writeCredentials creates path with mode 0600, refusing an existing file.

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0
+
+- `share.Format(c)`: lays the exFAT filesystem onto a container's volume, through
+  the container. `theca create --fs exfat` uses it, and so can any front end that
+  creates containers (the GUI's Create does). A volume too small is refused.
+
 ## v0.3.0
 
 - New package `github.com/go-theca/theca/share`: the logic of `serve` as a
