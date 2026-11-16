@@ -264,6 +264,21 @@ all eight.
 This fits DESIGN.md §6.2 (F2 "hardware-bound") and both constructions of
 decision D3.
 
+> **Revised.** H2 (a) was replaced on 2026-11-15 by (b) ("H2 revised" in §9,
+> DESIGN.md §19 I21). Read this section with these changes:
+>
+> - step 2 uses `rk = true`;
+> - step 3 has no stored `salt_c`: the salt is derived from the partner;
+> - there is no locator;
+> - the **Unlock** paragraph sends an empty `allowList` and reads every Theca
+>   credential through `getNextAssertion`, instead of trying stored credential
+>   IDs;
+> - in §8.4, "the credential is the one asked for" becomes "one of the
+>   credentials returned".
+>
+> `GetInfo`, `credProtect`, the UV and UP checks and the KEK derivation are
+> unchanged.
+
 **Enrolment** (needs MS, so two factors present, DESIGN.md §6.2):
 
 1. `GetInfo`. Require `hmac-secret` in `extensions`, `credProtect` support,
@@ -562,9 +577,11 @@ key and would buy nothing, because the salt already binds.
   (H2), and from the TA1 slot itself (DESIGN.md §9.3). A random 256-bit salt
   per slot also makes the outputs for two containers unrelated, even with the
   same credential.
-- The salt is not secret: the `CredRandom` inside the key is the secret.
-  Indistinguishability is the reason it is stored inside the TA1-sealed area
-  where possible.
+- ~~The salt is not secret.~~ **Since H2 was revised, the salt IS secret**: it
+  is derived from the partner factor and verifies guesses of it at the
+  partner's KDF cost. It is wiped after each call and never logged (§9, "H2
+  revised"). The bullets above and below describe the stored random salt of
+  H2 (a).
 - Because `salt1` does not depend on the header salt (H7), re-salting the
   header (DESIGN.md §9.4) leaves KEK₂ unchanged and does not need the finger.
 - `salt2` is reserved for rotation: asking for `salt1` and `salt2` in one touch
@@ -622,6 +639,102 @@ The recommendations were accepted.
 - **H6**: use the Windows WebAuthn dialog.
 - **H7**: the FIDO2 salt is fixed per slot and independent of the header salt.
   Rotating the header salt does not require the finger (§5.1, §8.3 updated).
+  **Relaxed on 2026-11-16 by the user** with H2 revised: the `{password, key}`
+  slot's salt now follows the password's KEK, so re-salting needs the key for
+  that slot (see "H2 revised").
+
+### H2 revised (2026-11-15, decision delegated by the user: « fait au mieux »)
+
+**H2 is now (b), a discoverable credential, with a salt DERIVED from the
+partner factor.** It replaces (a) above.
+
+Why. Review 2 of go-theca/theca#4 showed that a locator sealed under a
+password-derived key cannot hide a **predictable plaintext**: if a key model
+gives its credential IDs a fixed length, the length byte alone lets a wrong
+password guess be filtered offline, about 3 bits per guess, with no key
+present (DESIGN 19, I19). Nothing in (a) can remove that, because the
+locator has to be stored.
+
+What changes:
+
+- **No locator on disk.** The credential is discoverable (`rk = true`,
+  `rpId = "theca"`, `credProtect = 3`). At unlock the key is asked once with an
+  empty `allowList` and answers for every Theca credential it holds
+  (`getAssertion`, then `getNextAssertion`).
+- **The salt is derived, not stored:**
+  `salt = HKDF-SHA-256(KEK_partner, info = "theca/v1/fido2/salt/<kind>")`, one
+  per partner. The two salts (password, recovery code) travel in **one**
+  request (`salt1`, `salt2`), so an unlock costs one touch. `salt2` is
+  therefore no longer free for rotation (§8.3).
+- **A wrong password gives a different salt.** Every guess therefore needs a
+  fresh, touch-gated question to the key, even for an attacker who holds the
+  key and its PIN. This keeps the property (a) had, that password guesses
+  against the key slot are online only, and removes I19's offline filter
+  entirely.
+- **One slot per partner** instead of two (no locator slots).
+
+**The salt is now a password verifier.** Being a function of the password,
+it lets whoever READS it test password guesses offline, at one Argon2id per
+guess (review of the change, finding 1, verified with a test). No design
+removes every offline test; each moves it somewhere else:
+
+| design | whoever holds the file | whoever holds the key and its PIN | whoever reads the salt (a forged key, a log, a memory dump) |
+|---|---|---|---|
+| (a) locator under KEK_pw | ~3 bits filtered per guess if credential IDs are predictable (I19) | online only | nothing to learn |
+| (b), public salt | nothing | **full offline test** | nothing to learn |
+| (b), salt derived from the partner (chosen) | nothing | online only | **full offline test** |
+
+Why the last row. The host that sees the salt also sees the password typed
+in, so a trusted host learns nothing new. What remains is a **forged
+authenticator**, which receives the salt inside the hmac-secret request, and
+**software hygiene**. Therefore the salts are wiped after each call
+(`TestSaltsAreWipedAfterTheCall`), must never be logged, and the adapter
+must not keep them.
+
+What it costs, stated:
+
+- **One discoverable credential per enrolment** on the key: 100 slots on
+  firmware 5.7, 25 before.
+- **A key held with its PIN reveals that Theca credentials exist on it.** The
+  key does not reveal which containers they belong to.
+- **H7 relaxed, decided by the user on 2026-11-16 (« prenons assoupli »),**
+  after the trade-off was explained in concrete terms: protection against a
+  thief holding the key, its PIN and a copy of the container (every password
+  guess costs a touch) was preferred to re-salting without the key, an
+  operation v0.1 does not have. H7 said the FIDO2 salt is "independent of the
+  header salt". Here
+  the salt of the `{password, key}` slot depends on the password's KEK, which
+  depends on the header salt. So re-salting the header needs the key (one
+  touch) for that slot. A password change already needs the key in practice.
+  The `{recovery code, key}` slot is unaffected, because the recovery code's
+  KEK does not depend on the header salt. Re-salting is not implemented in
+  v0.1.
+- **Touches.** One per unlock: `Derive` is one `getAssertion` plus
+  `getNextAssertion` calls. **Two per enrolment** unless the key supports
+  `hmac-secret-mc`: `makeCredential`, then `getAssertion` for the outputs
+  (§5.1 step 4). The 5.7.4 capture does not list `hmac-secret-mc`. The tests
+  count interface calls, not touches.
+- **Fail closed.** A malformed answer from the key (wrong output count or
+  length, more than 128 credentials) stops the unlock with
+  `ErrAuthenticator`, even if the other factors alone would open the
+  container. A misbehaving authenticator is not ignored silently.
+- **A slot for the key alone is refused.** Its salt would have no partner to
+  come from, so unlock could never ask for it.
+- **Measured on the real key (2026-11-16, YubiKey 5, firmware 5.7.4, PIN
+  mode, go-macos/fido `TestRealKeyDiscoverableNextAssertion`, go-authn/fido
+  v0.8.0 `GetAssertions`):**
+  - two discoverable credentials were announced (`numberOfCredentials` 2);
+  - ONE verified request (one touch) returned both;
+  - **both** assertions, the `getNextAssertion` one included, carried the
+    `hmac-secret` output;
+  - the next assertion's output equals a direct assertion of that credential.
+
+  CTAP 2.1 §6.3 itself does not promise extension outputs on a next
+  assertion (read 2026-11-16, partly through a summary). The behaviour is
+  measured, not specified, so the adapter must treat a missing output as "this
+  credential cannot be tried" and never as a key. **Still unknown:** a key
+  with a display may let the person pick ONE credential instead (§6.2.2
+  step 12), and other firmware may omit the outputs.
 
 DESIGN.md §6.3 (pull request #1) still says the CTAP 2.1 `hmac-secret` section
 was "not opened". This note opened it (§2.1). That row can be updated when

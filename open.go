@@ -3,7 +3,6 @@ package theca
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 
@@ -14,90 +13,97 @@ import (
 	"github.com/go-theca/theca/internal/ta1"
 )
 
-// collectFactors turns what the user presented into factors. A FIDO2 key is
-// asked only after a partner factor is known, because its locator is sealed
-// under the partner's KEK (decision H2): every slot is decrypted as a
-// locator under each partner, and the key is asked about each candidate. The
-// key, not a tag, says which one is real.
+// collectFactors turns what the user presented into candidate KEKs: each
+// partner factor alone, the two partners as a pair, and, when a FIDO2 key is
+// present, the pair {partner, key credential} for every Theca credential on
+// the key (decision H2 revised, DESIGN 19, I21). The key is asked ONCE, with
+// one salt per partner derived from that partner's KEK, so one touch serves
+// every partner and every credential; nothing about the key is read from
+// the container.
 //
-// On error every factor already derived is wiped. Duplicate key answers are
-// recognised by comparing derived KEKs, never by keeping the raw secret as a
-// map key, because a Go string cannot be wiped (review of PR #4, finding 5).
-func collectFactors(ctx context.Context, u *Unlock, salt []byte, table [format.NumSlots][]byte) (fs []Factor, err error) {
-	// The capacity is the most this can hold (password, recovery code, and
-	// one key answer per slot per partner), so append never moves the KEKs
-	// and leaves an unwiped copy behind.
-	fs = make([]Factor, 0, 2+2*format.NumSlots)
+// The returned KEKs are the caller's to wipe; on error they are wiped here.
+func collectFactors(ctx context.Context, u *Unlock, salt []byte) (cands [][32]byte, err error) {
+	// The capacity is the most this can hold (two singles, one pair, one pair
+	// per credential per partner), so append never moves the KEKs and leaves
+	// an unwiped copy behind.
+	cands = make([][32]byte, 0, 3+MaxFIDO2Credentials*MaxFIDO2Salts)
+	var fs []Factor // the partners: at most 2, wiped on return
 	defer func() {
+		for i := range fs {
+			fs[i].Zeroize()
+		}
 		if err != nil {
-			for i := range fs {
-				fs[i].Zeroize()
+			for i := range cands {
+				clear(cands[i][:])
 			}
-			fs = nil
+			cands = nil
 		}
 	}()
+	fs = make([]Factor, 0, MaxFIDO2Salts)
 	if len(u.Password) > 0 {
 		pw, err := PasswordFactor(u.Hint, u.Password, salt)
 		if err != nil {
-			return fs, err
+			return nil, err
 		}
 		fs = append(fs, pw)
 	}
 	if u.Recovery != "" {
 		rc, err := RecoveryFactor(u.Recovery)
 		if err != nil {
-			return fs, err
+			return nil, err
 		}
 		fs = append(fs, rc)
 	}
-	if u.FIDO == nil {
-		return fs, nil
-	}
-	// The partners are the factors collected so far; they are indexed, not
-	// copied, so no extra copy of a KEK is left behind.
-	np := len(fs)
-	for pi := 0; pi < np; pi++ {
-		for i := 0; i < format.NumSlots; i++ {
-			// ok is false only for a blob of the wrong size, and Open
-			// reads every slot at exactly SlotSize.
-			loc, _ := format.OpenLocator(&fs[pi].KEK, table[i])
-			secret, err := u.FIDO.Derive(ctx, loc)
-			if errors.Is(err, ErrNoCredential) {
-				continue
-			}
-			if err != nil {
-				return fs, err
-			}
-			k := FIDO2Factor(secret)
-			clear(secret)
-			dup := false
-			for j := np; j < len(fs); j++ {
-				if subtle.ConstantTimeCompare(fs[j].KEK[:], k.KEK[:]) == 1 {
-					dup = true
-				}
-			}
-			if dup {
-				k.Zeroize()
-				continue
-			}
-			fs = append(fs, k)
-		}
-	}
-	return fs, nil
-}
-
-// unlockSlots tries every candidate key-encryption key (each factor alone,
-// each pair) against all 16 slots. It always does the same work whatever
-// matches (DESIGN 9.2, finding R8) and returns the first master secret found.
-func unlockSlots(fs []Factor, table [format.NumSlots][]byte) *ta1.Keys {
-	// Exact capacity, so append never leaves a copy of a key behind.
-	cands := make([][32]byte, 0, len(fs)*(len(fs)+1)/2)
 	for i := range fs {
 		cands = append(cands, fs[i].KEK)
-		for j := i + 1; j < len(fs); j++ {
-			cands = append(cands, kdf.Pair(&fs[i].KEK, fs[i].Kind, &fs[j].KEK, fs[j].Kind))
+	}
+	if len(fs) == 2 {
+		cands = append(cands, kdf.Pair(&fs[0].KEK, fs[0].Kind, &fs[1].KEK, fs[1].Kind))
+	}
+	// A key pairs with a partner; with no partner presented there is nothing
+	// to ask it.
+	if u.FIDO == nil || len(fs) == 0 {
+		return cands, nil
+	}
+	// The salts are a function of the password: whoever reads one can test
+	// password guesses offline (at Argon2id cost). They are wiped after use
+	// and must never be logged (HARDWARE-KEYS 8.3).
+	salts := fido2Salts(fs)
+	defer clearSalts(salts)
+	creds, err := u.FIDO.Derive(ctx, salts)
+	defer func() {
+		for _, cr := range creds {
+			for _, o := range cr {
+				clear(o)
+			}
+		}
+	}()
+	if errors.Is(err, ErrNoCredential) {
+		return cands, nil
+	}
+	if err != nil {
+		return cands, err
+	}
+	if len(creds) > MaxFIDO2Credentials {
+		return cands, fmt.Errorf("%w: %d credentials (at most %d)", ErrAuthenticator, len(creds), MaxFIDO2Credentials)
+	}
+	for _, outs := range creds {
+		if err := checkOutputs(outs, len(fs)); err != nil {
+			return cands, err
+		}
+		for j := range fs {
+			key := FIDO2Factor(outs[j])
+			cands = append(cands, kdf.Pair(&fs[j].KEK, fs[j].Kind, &key.KEK, key.Kind))
+			key.Zeroize()
 		}
 	}
+	return cands, nil
+}
+
+// unlockSlots tries every candidate key-encryption key against all 16 slots
+// and wipes each candidate after use. It always does the same work whatever
+// matches (DESIGN 9.2, finding R8) and returns the first master secret found.
+func unlockSlots(cands [][32]byte, table [format.NumSlots][]byte) *ta1.Keys {
 	var found *ta1.Keys
 	for ci := range cands {
 		for i := 0; i < format.NumSlots; i++ {
@@ -137,14 +143,11 @@ func Open(ctx context.Context, f Backing, u Unlock, o OpenOptions) (*Container, 
 			return nil, err
 		}
 	}
-	fs, err := collectFactors(ctx, &u, salt, table)
+	cands, err := collectFactors(ctx, &u, salt)
 	if err != nil {
 		return nil, err
 	}
-	ms := unlockSlots(fs, table)
-	for i := range fs {
-		fs[i].Zeroize()
-	}
+	ms := unlockSlots(cands, table)
 	if ms == nil {
 		return nil, ErrNoMatch
 	}

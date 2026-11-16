@@ -54,9 +54,11 @@ var (
 	ErrClosed  = errors.New("theca: container is closed")
 	ErrNoSlot  = errors.New("theca: no free keyslot")
 	ErrOption  = errors.New("theca: invalid option")
-	// ErrNoCredential is returned by a FIDO2 provider for a locator its key
-	// does not know. It is routine during unlock and not an error.
-	ErrNoCredential = errors.New("theca: authenticator does not know this credential")
+	// ErrNoCredential is returned by a FIDO2 provider whose key holds no
+	// Theca credential. It is routine during unlock and not an error.
+	ErrNoCredential = errors.New("theca: authenticator holds no theca credential")
+	// ErrAuthenticator: a FIDO2 provider answered something malformed.
+	ErrAuthenticator = errors.New("theca: malformed answer from the authenticator")
 )
 
 // Backing is the storage under a container.
@@ -79,9 +81,6 @@ func (f FileBacking) Size() (int64, error) {
 	return st.Size(), nil
 }
 
-// Locator is the FIDO2 locator stored in a locator slot.
-type Locator = format.Locator
-
 // Counter is a hardware monotonic counter (DESIGN 5.4): in practice a TPM NV
 // counter. Handle and Name identify the index; the container pins both.
 type Counter interface {
@@ -91,15 +90,61 @@ type Counter interface {
 	Increment() error
 }
 
-// FIDO2 is a hmac-secret authenticator. Both calls produce the raw 32-byte
-// hmac-secret output; the container derives a KEK from it.
+// MaxFIDO2Salts is how many salts one hmac-secret request carries (salt1 and
+// salt2, CTAP 2.1 §12.5), hence how many partner factors one key pairs with.
+const MaxFIDO2Salts = 2
+
+// MaxFIDO2Credentials bounds how many Theca credentials an authenticator
+// may report in one answer (a YubiKey 5.7 holds at most 100 discoverable
+// credentials). A larger answer is refused, not processed.
+const MaxFIDO2Credentials = 128
+
+// FIDO2 is a hmac-secret authenticator holding DISCOVERABLE credentials
+// for the rp id "theca" (decision H2, revised: DESIGN 19, I21). Nothing
+// about the key is stored in the container: the salts are derived from the
+// partner factors (kdf.FIDO2Salt), and the key is asked about all of its
+// Theca credentials at once. Each call is one touch and one user
+// verification. Every output is the raw 32-byte hmac-secret value.
 type FIDO2 interface {
-	// Enroll makes a credential and a fresh salt and returns the locator and
-	// the secret for that salt.
-	Enroll(ctx context.Context) (Locator, []byte, error)
-	// Derive asks the key for the secret of a locator. It returns
-	// ErrNoCredential if the key does not know the credential.
-	Derive(ctx context.Context, loc Locator) ([]byte, error)
+	// Enroll creates a new discoverable credential (rk, credProtect 3) and
+	// returns its outputs for each salt, in order (one or two salts).
+	Enroll(ctx context.Context, salts [][32]byte) ([][]byte, error)
+	// Derive asks for the outputs of EVERY Theca credential on the key, for
+	// each salt (getAssertion with an empty allowList, then
+	// getNextAssertion): result[i][j] is credential i's output for salts[j].
+	// It returns ErrNoCredential if the key holds none.
+	Derive(ctx context.Context, salts [][32]byte) ([][][]byte, error)
+}
+
+func clearSalts(salts [][32]byte) {
+	for i := range salts {
+		clear(salts[i][:])
+	}
+}
+
+// fido2Salts derives one salt per partner factor. A salt is a function of
+// the partner's secret: it is a verifier for guesses of that secret, at the
+// partner's KDF cost (Argon2id for a password). It goes only to the
+// authenticator, and is wiped by the caller (DESIGN 19, I21).
+func fido2Salts(partners []Factor) [][32]byte {
+	salts := make([][32]byte, len(partners))
+	for i := range partners {
+		salts[i] = kdf.FIDO2Salt(&partners[i].KEK, partners[i].Kind)
+	}
+	return salts
+}
+
+// checkOutputs validates one credential's answer: one 32-byte output per salt.
+func checkOutputs(outs [][]byte, n int) error {
+	if len(outs) != n {
+		return fmt.Errorf("%w: %d outputs for %d salts", ErrAuthenticator, len(outs), n)
+	}
+	for _, o := range outs {
+		if len(o) != 32 {
+			return fmt.Errorf("%w: a %d-byte output", ErrAuthenticator, len(o))
+		}
+	}
+	return nil
 }
 
 // Factor is one access factor reduced to a key-encryption key.
@@ -137,6 +182,11 @@ func FIDO2Factor(secret []byte) Factor { return Factor{Kind: "fido2", KEK: kdf.K
 func slotKEK(fs []Factor) ([32]byte, error) {
 	switch len(fs) {
 	case 1:
+		// A key's salt comes from its partner (I21), so a slot opened by the
+		// key alone could never be asked for at unlock: refuse to write one.
+		if fs[0].Kind == "fido2" {
+			return [32]byte{}, fmt.Errorf("%w: a FIDO2 key opens a slot only with a partner factor", ErrOption)
+		}
 		return fs[0].KEK, nil
 	case 2:
 		return kdf.Pair(&fs[0].KEK, fs[0].Kind, &fs[1].KEK, fs[1].Kind), nil
@@ -456,21 +506,6 @@ func (c *Container) sealSlot(fs []Factor) (pendingSlot, error) {
 	return pendingSlot{i, blob}, nil
 }
 
-// sealLocator seals a FIDO2 locator under the partner's KEK into a free
-// index and reserves it.
-func (c *Container) sealLocator(partner *Factor, loc *Locator) (pendingSlot, error) {
-	i, err := c.freeSlot()
-	if err != nil {
-		return pendingSlot{}, err
-	}
-	blob, err := format.SealLocator(&partner.KEK, loc, c.rng)
-	if err != nil {
-		return pendingSlot{}, err
-	}
-	c.body.SlotsUsed |= 1 << i
-	return pendingSlot{i, blob}, nil
-}
-
 // publishLocked records the reserved slots in the header (one commit), and
 // only then writes their bytes. A crash in between leaves a slot that is
 // recorded but holds random bytes: harmless, and RemoveSlot clears it.
@@ -518,23 +553,6 @@ func (c *Container) AddSlot(fs ...Factor) error {
 	return c.publishLocked("add slot", []pendingSlot{p})
 }
 
-// AddLocator stores a FIDO2 locator sealed under the partner factor's KEK
-// (decision H2).
-func (c *Container) AddLocator(partner Factor, loc Locator) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.usable(); err != nil {
-		return err
-	}
-	saved := c.body.SlotsUsed
-	p, err := c.sealLocator(&partner, &loc)
-	if err != nil {
-		c.body.SlotsUsed = saved
-		return err
-	}
-	return c.publishLocked("add locator", []pendingSlot{p})
-}
-
 // RemoveSlot overwrites slot i with random bytes, then records it as free.
 // Any index 0..15 is accepted, recorded or not, so that a working slot the
 // header does not record (left by a crash in an older version, or written
@@ -573,19 +591,21 @@ func (c *Container) RemoveSlot(i int) error {
 }
 
 // EnrollFIDO2 enrols a hardware key paired with each of the given partner
-// factors: for every partner it adds the pairwise slot {partner, key} and a
-// locator sealed under the partner's KEK, all recorded by ONE commit.
-// Enrolment needs the master secret, so the container must already be open.
-// The container and its free slots are checked before the key is asked, so a
-// touch is never spent on an enrolment that cannot be stored (review of PR
-// #4, finding 6).
+// factors (one or two: the hmac-secret salts of one request). The key makes a
+// new discoverable credential and answers one output per partner, for the
+// salt derived from that partner (kdf.FIDO2Salt); each output becomes the
+// pairwise slot {partner, key}. Nothing else is stored, and all the slots are
+// recorded by ONE commit. Enrolment needs the master secret, so the container
+// must already be open. The container and its free slots are checked before
+// the key is asked, so a touch is never spent on an enrolment that cannot be
+// stored (review of PR #4, finding 6).
 func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Factor) error {
-	if len(partners) == 0 {
-		return fmt.Errorf("%w: a key needs at least one partner factor", ErrOption)
+	if len(partners) == 0 || len(partners) > MaxFIDO2Salts {
+		return fmt.Errorf("%w: a key pairs with 1 or %d partner factors, not %d", ErrOption, MaxFIDO2Salts, len(partners))
 	}
 	c.mu.Lock()
 	err := c.usable()
-	if err == nil && len(c.freeSlots()) < 2*len(partners) {
+	if err == nil && len(c.freeSlots()) < len(partners) {
 		err = ErrNoSlot
 	}
 	c.mu.Unlock()
@@ -593,13 +613,20 @@ func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Fact
 		return err
 	}
 	// The lock is not held while the key waits for a touch.
-	loc, secret, err := dev.Enroll(ctx)
+	salts := fido2Salts(partners) // password-equivalent: wiped, never logged
+	defer clearSalts(salts)
+	outs, err := dev.Enroll(ctx, salts)
+	defer func() {
+		for _, o := range outs {
+			clear(o)
+		}
+	}()
 	if err != nil {
 		return err
 	}
-	defer clear(secret)
-	key := FIDO2Factor(secret)
-	defer key.Zeroize()
+	if err := checkOutputs(outs, len(partners)); err != nil {
+		return err
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -609,17 +636,14 @@ func (c *Container) EnrollFIDO2(ctx context.Context, dev FIDO2, partners ...Fact
 	saved := c.body.SlotsUsed
 	var ps []pendingSlot
 	for i := range partners {
+		key := FIDO2Factor(outs[i])
 		w, err := c.sealSlot([]Factor{partners[i], key})
+		key.Zeroize()
 		if err != nil {
 			c.body.SlotsUsed = saved
 			return err
 		}
-		l, err := c.sealLocator(&partners[i], &loc)
-		if err != nil {
-			c.body.SlotsUsed = saved
-			return err
-		}
-		ps = append(ps, w, l)
+		ps = append(ps, w)
 	}
 	return c.publishLocked("enrol fido2", ps)
 }

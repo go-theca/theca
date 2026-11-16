@@ -78,7 +78,22 @@ const infoPrefix = "theca/v1/TA1/slot/"
 func KEK(secret []byte, kind string) [32]byte {
 	// hkdf.Key fails only when the requested length exceeds 255 hashes.
 	k, _ := hkdf.Key(sha256.New, secret, nil, infoPrefix+kind, 32)
-	return [32]byte(k)
+	out := [32]byte(k)
+	clear(k)
+	return out
+}
+
+// FIDO2Salt is the hmac-secret salt a FIDO2 key is asked for when it pairs
+// with the partner factor of the given kind (DESIGN 19, I21): HKDF-SHA-256
+// of the partner's KEK, info "theca/v1/fido2/salt/<kind>". Nothing about the
+// key is stored in the container. A wrong partner (a wrong password guess)
+// gives another salt, so every guess needs a fresh, touch-gated question to
+// the key: there is no offline test of the partner through the key's slot.
+func FIDO2Salt(partner *[32]byte, kind string) [32]byte {
+	k, _ := hkdf.Key(sha256.New, partner[:], nil, "theca/v1/fido2/salt/"+kind, 32)
+	out := [32]byte(k)
+	clear(k)
+	return out
 }
 
 // Keys expands a 32-byte KEK into the three Theca-A keys that seal a slot

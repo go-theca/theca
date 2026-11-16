@@ -48,7 +48,7 @@ func slotOf(t *testing.T, f *memFile, k *Factor) int {
 func TestSlotCrashNeverLeavesAnUnrecordedWorkingSlot(t *testing.T) {
 	base, f, _ := create(t, PolicyAny)
 	base.Close()
-	k := FIDO2Factor(rnd(32))
+	k := randomFactor()
 
 	cuts := 0
 	for cut := 0; ; cut++ {
@@ -97,7 +97,7 @@ func TestSlotCrashNeverLeavesAnUnrecordedWorkingSlot(t *testing.T) {
 // record (an older version's crash, another tool) can still be destroyed.
 func TestUnrecordedWorkingSlotCanBeRemoved(t *testing.T) {
 	c, f, _ := create(t, PolicyAny)
-	k := FIDO2Factor(rnd(32))
+	k := randomFactor()
 	free := c.freeSlots()[0]
 	blob, err := format.SealWrap(c.k, &k.KEK, free, c.rng)
 	if err != nil {
@@ -122,16 +122,9 @@ type closingKey struct {
 	c *Container
 }
 
-func (k *closingKey) Enroll(ctx context.Context) (Locator, []byte, error) {
+func (k *closingKey) Enroll(ctx context.Context, salts [][32]byte) ([][]byte, error) {
 	k.c.Close()
-	return k.fakeKey.Enroll(ctx)
-}
-
-// badLocatorKey returns a locator the format refuses to store.
-type badLocatorKey struct{ fakeKey }
-
-func (*badLocatorKey) Enroll(context.Context) (Locator, []byte, error) {
-	return Locator{}, rnd(32), nil
+	return k.fakeKey.Enroll(ctx, salts)
 }
 
 // TestEnrollChecksFirstAndCommitsOnce (finding 6).
@@ -148,21 +141,21 @@ func TestEnrollChecksFirstAndCommitsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := c.Info().Epoch; got != e+1 {
-		t.Fatalf("enrolment of 4 slots took %d commits, want 1", got-e)
+		t.Fatalf("enrolment of 2 slots took %d commits, want 1", got-e)
 	}
-	// 5 slots used; fill to 14, so only 2 are free.
-	for c.Info().SlotsUsed < 14 {
-		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+	// 3 slots used; fill to 15, so only 1 is free.
+	for c.Info().SlotsUsed < 15 {
+		if err := c.AddSlot(randomFactor()); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := c.EnrollFIDO2(ctx, key, pw, rc); !errors.Is(err, ErrNoSlot) || key.enrolls != 1 {
-		t.Fatalf("no room for 4 slots: %v after %d touches", err, key.enrolls)
+		t.Fatalf("no room for 2 slots: %v after %d touches", err, key.enrolls)
 	}
-	// A locator the format refuses: nothing is reserved or committed.
+	// A malformed answer: nothing is reserved or committed.
 	e, used := c.Info().Epoch, c.body.SlotsUsed
-	if err := c.EnrollFIDO2(ctx, &badLocatorKey{}, pw); err == nil {
-		t.Fatal("bad locator accepted")
+	if err := c.EnrollFIDO2(ctx, &badKey{enrollOuts: [][]byte{rnd(7)}}, pw); !errors.Is(err, ErrAuthenticator) {
+		t.Fatalf("malformed answer: %v", err)
 	}
 	if c.Info().Epoch != e || c.body.SlotsUsed != used {
 		t.Fatal("a failed enrolment left reservations or a commit behind")
@@ -192,10 +185,10 @@ type failRandKey struct {
 	saved interface{ Read([]byte) (int, error) }
 }
 
-func (k *failRandKey) Enroll(ctx context.Context) (Locator, []byte, error) {
+func (k *failRandKey) Enroll(ctx context.Context, salts [][32]byte) ([][]byte, error) {
 	k.saved = k.c.rng
 	k.c.rng = failReader{}
-	return newKey().Enroll(ctx)
+	return newKey().Enroll(ctx, salts)
 }
 
 func counterContainer(t *testing.T, v uint64) (*memFile, *fakeCounter) {
@@ -306,7 +299,7 @@ func (c constReader) Read(p []byte) (int, error) {
 func TestFreeSlotEndsOnAConstantSource(t *testing.T) {
 	c, _, _ := create(t, PolicyAny)
 	for c.Info().SlotsUsed < format.NumSlots-3 {
-		if err := c.AddSlot(FIDO2Factor(rnd(32))); err != nil {
+		if err := c.AddSlot(randomFactor()); err != nil {
 			t.Fatal(err)
 		}
 	}

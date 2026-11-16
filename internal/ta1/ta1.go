@@ -47,7 +47,6 @@ const (
 	LabelUnwritten = "theca/v1/TA1/unwritten"
 	LabelHeader    = "theca/v1/TA1/header"
 	LabelSlot      = "theca/v1/TA1/slot"
-	LabelLocator   = "theca/v1/TA1/locator"
 	LabelJournal   = "theca/v1/TA1/journal"
 	LabelCommit    = "theca/v1/TA1/commit"
 )
@@ -349,9 +348,10 @@ func (k *Keys) Open(label string, ad, blob []byte) ([]byte, error) {
 	return pt, nil
 }
 
-// SealUntagged returns seed(40) || ciphertext with no tag. It exists for the
-// FIDO2 locator slots, which must not confirm a guess of their partner
-// factor on their own (DESIGN 6.2, review finding R3). The caller must verify
+// SealUntagged returns seed(40) || ciphertext with no tag, for objects that
+// must not confirm a guess of the key on their own: Shamir share slots
+// (decision D3 (a)), as the FIDO2 locator slots were before decision H2 was
+// revised (DESIGN 19, I3 and I21; review finding R3). The caller must verify
 // the result through another, tagged object.
 func (k *Keys) SealUntagged(plain []byte, rng io.Reader) ([]byte, error) {
 	if len(plain) > MaxObject {
