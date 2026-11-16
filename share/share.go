@@ -46,6 +46,19 @@ type Options struct {
 	Mount bool          // mount the share in the file manager, with no password dialog
 }
 
+// Format lays an exFAT filesystem (label THECA) onto the whole logical volume
+// of c, through the container itself: nothing decrypted is written anywhere
+// else. It erases what the volume held. A volume too small for exFAT is
+// refused. This is what `theca create --fs exfat` does, so a container made
+// by any front end can be served by Start.
+func Format(c *theca.Container) error {
+	fsys, err := exfat.FormatImage(c, c.Size(), exfat.FormatConfig{Label: "THECA"})
+	if err != nil {
+		return err
+	}
+	return fsys.Close()
+}
+
 // CheckAddr refuses an address that is not on the loopback interface: the
 // share carries decrypted data, and the SMB server still accepts a replayed
 // frame (go-filesystems/smb#53) and an unsigned request on a session that

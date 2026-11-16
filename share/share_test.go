@@ -44,15 +44,35 @@ func newContainer(t *testing.T, withFS bool) *theca.Container {
 	}
 	t.Cleanup(func() { c.Close(); f.Close() })
 	if withFS {
-		fsys, err := exfat.FormatImage(c, c.Size(), exfat.FormatConfig{Label: "THECA"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := fsys.Close(); err != nil {
+		if err := Format(c); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return c
+}
+
+func TestFormat(t *testing.T) {
+	c := newContainer(t, true)
+	fsys, err := exfat.OpenReader(c, c.Size())
+	if err != nil {
+		t.Fatalf("no exFAT after Format: %v", err)
+	}
+	fsys.Close()
+	// Too small for exFAT: refused.
+	f, err := os.OpenFile(filepath.Join(t.TempDir(), "s.theca"), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	f.Truncate(1 << 20)
+	small, _, err := theca.Create(theca.FileBacking{File: f}, theca.CreateOptions{Sectors: 1, Password: []byte("x")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer small.Close()
+	if err := Format(small); err == nil {
+		t.Fatal("a one-sector volume was formatted")
+	}
 }
 
 func opts() Options {
