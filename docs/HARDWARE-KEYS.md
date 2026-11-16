@@ -713,14 +713,21 @@ What it costs, stated:
   container. A misbehaving authenticator is not ignored silently.
 - **A slot for the key alone is refused.** Its salt would have no partner to
   come from, so unlock could never ask for it.
-- **To verify on the real key before v0.1:**
-  - that `getNextAssertion` returns the `hmac-secret` output for each
-    credential;
-  - that the sequence costs one touch;
-  - what a key with a display does: it may let the user pick ONE credential
-    instead of returning all of them.
-  
-  CTAP 2.1 §6.3 was not opened for this note (§10).
+- **Measured on the real key (2026-11-16, YubiKey 5, firmware 5.7.4, PIN
+  mode, go-macos/fido `TestRealKeyDiscoverableNextAssertion`, go-authn/fido
+  v0.8.0 `GetAssertions`):**
+  - two discoverable credentials were announced (`numberOfCredentials` 2);
+  - ONE verified request (one touch) returned both;
+  - **both** assertions, the `getNextAssertion` one included, carried the
+    `hmac-secret` output;
+  - the next assertion's output equals a direct assertion of that credential.
+
+  CTAP 2.1 §6.3 itself does not promise extension outputs on a next
+  assertion (read 2026-11-16, partly through a summary). The behaviour is
+  measured, not specified, so the adapter must treat a missing output as "this
+  credential cannot be tried" and never as a key. **Still unknown:** a key
+  with a display may let the person pick ONE credential instead (§6.2.2
+  step 12), and other firmware may omit the outputs.
 
 DESIGN.md §6.3 (pull request #1) still says the CTAP 2.1 `hmac-secret` section
 was "not opened". This note opened it (§2.1). That row can be updated when
