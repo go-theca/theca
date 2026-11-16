@@ -20,7 +20,83 @@ import (
 	"golang.org/x/term"
 
 	"github.com/go-theca/theca"
+	"github.com/go-theca/theca/fido2"
+	"github.com/go-theca/theca/internal/format"
 )
+
+func enrollKeyCmd() *cobra.Command {
+	var s secrets
+	cmd := &cobra.Command{
+		Use:   "enroll-key FILE",
+		Short: "Pair the attached FIDO2 security key with the password (and the recovery code)",
+		Long: "Pair the attached FIDO2 security key with the password, and with the\n" +
+			"recovery code too when --recovery-file names it. The key makes one\n" +
+			"discoverable credential and is touched twice: to register, then to confirm.\n" +
+			"Nothing about the key is written into the container but its pairwise slots.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f, err := os.OpenFile(args[0], os.O_RDWR, 0)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			salt := make([]byte, format.SaltSize)
+			if _, err := f.ReadAt(salt, 0); err != nil {
+				return err
+			}
+			u, wipe, err := s.unlock(cmd)
+			defer wipe()
+			if err != nil {
+				return err
+			}
+			// The partner factors, derived from the same secrets that open it.
+			var partners []theca.Factor
+			defer func() {
+				for i := range partners {
+					partners[i].Zeroize()
+				}
+			}()
+			if len(u.Password) > 0 {
+				pw, err := theca.PasswordFactor(s.hint, u.Password, salt)
+				if err != nil {
+					return err
+				}
+				partners = append(partners, pw)
+			}
+			if u.Recovery != "" {
+				rc, err := theca.RecoveryFactor(u.Recovery)
+				if err != nil {
+					return err
+				}
+				partners = append(partners, rc)
+			}
+			c, err := theca.Open(cmd.Context(), theca.FileBacking{File: f}, u, theca.OpenOptions{})
+			if err != nil {
+				return err
+			}
+			dev, err := openFIDO(cmd.Context(), s.keyPIN(cmd))
+			if err != nil {
+				c.Close()
+				return err
+			}
+			defer dev.Close()
+			fmt.Fprintln(cmd.ErrOrStderr(), "Touch the security key twice when it blinks: to register it, then to confirm.")
+			err = c.EnrollFIDO2(cmd.Context(), dev, partners...)
+			if cerr := c.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "ok: the key is paired with %d factor(s)\n", len(partners))
+			return nil
+		},
+	}
+	s.flags(cmd)
+	s.recoveryFlag(cmd)
+	s.pinFlag(cmd)
+	return cmd
+}
 
 // osExit is replaced by tests.
 var osExit = os.Exit
@@ -103,6 +179,8 @@ type secrets struct {
 	passwordFile string
 	recoveryFile string
 	hint         int
+	fido         bool
+	pinFile      string
 }
 
 func (s *secrets) flags(cmd *cobra.Command) {
@@ -112,7 +190,45 @@ func (s *secrets) flags(cmd *cobra.Command) {
 
 func (s *secrets) unlockFlags(cmd *cobra.Command) {
 	s.flags(cmd)
+	s.recoveryFlag(cmd)
+	cmd.Flags().BoolVar(&s.fido, "fido2", false, "also use the attached FIDO2 security key (it pairs with the password or the recovery code)")
+	s.pinFlag(cmd)
+}
+
+func (s *secrets) recoveryFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.recoveryFile, "recovery-file", "", "also present the recovery code read from this file (mode 0600 or stricter)")
+}
+
+func (s *secrets) pinFlag(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&s.pinFile, "pin-file", "", "read the security key's PIN from this file (mode 0600 or stricter) instead of the terminal; unused by a key with a fingerprint")
+}
+
+// keyPIN returns the function the key asks for its PIN through, only when
+// it has no built-in verification.
+func (s *secrets) keyPIN(cmd *cobra.Command) func() (string, error) {
+	return func() (string, error) {
+		var b []byte
+		var err error
+		if s.pinFile != "" {
+			b, err = readSecretFile(s.pinFile)
+		} else {
+			b, err = readTerminal(cmd, "Security key PIN: ")
+		}
+		pin := string(b)
+		clear(b)
+		return pin, err
+	}
+}
+
+// fidoDevice is a FIDO2 factor that must be released.
+type fidoDevice interface {
+	theca.FIDO2
+	Close() error
+}
+
+// openFIDO opens the attached security key; tests replace it.
+var openFIDO = func(ctx context.Context, pin func() (string, error)) (fidoDevice, error) {
+	return fido2.Open(ctx, pin)
 }
 
 func (s *secrets) password(cmd *cobra.Command, prompt string) ([]byte, error) {
@@ -126,7 +242,21 @@ func (s *secrets) password(cmd *cobra.Command, prompt string) ([]byte, error) {
 // recovery file was given, and the recovery code if a file names it.
 func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 	u := theca.Unlock{Hint: s.hint}
-	wipe := func() { clear(u.Password) }
+	var dev fidoDevice
+	wipe := func() {
+		clear(u.Password)
+		if dev != nil {
+			dev.Close()
+		}
+	}
+	if s.fido {
+		var err error
+		if dev, err = openFIDO(cmd.Context(), s.keyPIN(cmd)); err != nil {
+			return u, wipe, err
+		}
+		u.FIDO = dev
+		fmt.Fprintln(cmd.ErrOrStderr(), "Touch the security key when it blinks.")
+	}
 	if s.recoveryFile != "" {
 		rc, err := readSecretFile(s.recoveryFile)
 		if err != nil {
@@ -162,7 +292,7 @@ func open(cmd *cobra.Command, path string, s *secrets, write bool) (*theca.Conta
 		f.Close()
 		return nil, nil, err
 	}
-	c, err := theca.Open(context.Background(), theca.FileBacking{File: f}, u, theca.OpenOptions{})
+	c, err := theca.Open(cmd.Context(), theca.FileBacking{File: f}, u, theca.OpenOptions{})
 	if err != nil {
 		f.Close()
 		return nil, nil, err
@@ -214,7 +344,7 @@ func RootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd())
+	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd())
 	return root
 }
 
