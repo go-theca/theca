@@ -49,23 +49,36 @@ theca export vault.theca --password-file pw > disk.img
 
 ```sh
 theca create vault.theca --size 4G --fs exfat      # a container holding an exFAT filesystem
-theca serve vault.theca --credentials-out creds.json
-# serving smb://127.0.0.1:52817/theca (credentials in creds.json); Ctrl-C to stop
+theca serve vault.theca --mount                    # appears in the Finder; Ctrl-C unmounts and stops
+# serving smb://127.0.0.1:58738/theca; Ctrl-C to stop
+# mounted at /Volumes/theca
+theca serve vault.theca --credentials-out creds.json   # or: hand the account to another client
 ```
 
 - `create --fs exfat` formats the volume through the container itself
   (go-filesystems/exfat `FormatImage`). No decrypted copy is ever written to
   disk.
-- `serve` unlocks the container and serves its exFAT over SMB 2.1/3.0/3.0.2,
-  signed, using go-filesystems/smb.
-  - It listens on a **loopback address only**: the data is decrypted, and SMB
-    encryption is not implemented yet.
-  - One random account is written to `--credentials-out` (mode `0600`,
-    removed at exit), never printed or passed as an argument.
+- `serve` unlocks the container and serves its exFAT over SMB (2.1 to 3.1.1,
+  signed) using go-filesystems/smb.
+  - It listens on a **loopback address only**: the data is decrypted, and the
+    SMB server still accepts a replayed frame (go-filesystems/smb#53) and an
+    unsigned request on a session that requires signing (go-filesystems/smb#54).
+  - One random account is drawn per run, never printed or passed as an
+    argument.
+  - `--mount` mounts the share in the file manager with **no password
+    dialog** (go-fileshare/automount): the password goes to the OS mount
+    service as a value. At stop it unmounts first, so the client flushes
+    through the server, then commits and closes the container.
+  - `--credentials-out` writes the URL, user and password to a file (mode
+    `0600`, created only if absent, removed at exit), for another client.
+    One of the two is required.
   - Writes are committed to the container every `--sync` (default 5 s) and
     when the server stops.
-- An automatic mount in the Finder, GNOME Files and Windows Explorer is in
-  progress (go-macos/netfs, go-freedesktop/gvfs, go-mswin/win32).
+- Measured on macOS 27 (2026-11-16): `--mount` lands in `/Volumes/theca` over
+  SMB 3.1.1 signed with AES-128-GMAC, a file written through it survives a
+  stop and a remount, and `verify` passes. Linux (GNOME Files, through gvfs)
+  and Windows (Explorer, a drive letter through `MSFT_SmbMapping`) use the
+  same command; neither has been measured with theca yet.
 - A copy of a file written through the share is one transaction per journal
   budget, not one per file (DESIGN §19 I12). A crash in the middle of a large
   copy can leave the exFAT metadata of that copy half-written, as on a disk.
@@ -94,7 +107,7 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
 Design and trade-offs: [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md) §9
 "H2 revised", and [docs/DESIGN.md](docs/DESIGN.md) §19 I21.
 
-Not in this version: mounting, FIDO2 on Linux and Windows, the TPM counter,
+Not in this version: FIDO2 on Linux and Windows, the TPM counter,
 slot management on the command line (go-theca/theca#5).
 
 ## Library
