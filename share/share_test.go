@@ -16,7 +16,14 @@ import (
 	"github.com/go-filesystems/smb"
 
 	"github.com/go-theca/theca"
+	"github.com/go-theca/theca/internal/kdf"
 )
+
+func TestMain(m *testing.M) {
+	// Small Argon2id profiles: the production table is 2 GiB and up.
+	kdf.Table = [3]kdf.Profile{{Time: 1, MemKiB: 64, Threads: 1}, {Time: 2, MemKiB: 64, Threads: 2}, {Time: 1, MemKiB: 128, Threads: 1}}
+	os.Exit(m.Run())
+}
 
 // newContainer creates a 4 MiB container, formatted with exFAT or left raw.
 // The container is closed at the end of the test, never by the share.
