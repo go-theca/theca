@@ -729,6 +729,12 @@ What it costs, stated:
     `hmac-secret` output;
   - the next assertion's output equals a direct assertion of that credential.
 
+  **End to end (2026-11-16, same key, the `theca` CLI built from main at
+  49618e4):** on a 2-of-3 container, `enroll-key` with the password and the
+  recovery code took two touches and wrote two slots. `info --fido2` with the
+  password took one touch and opened the container. The password alone was
+  refused ("no factor opened a keyslot").
+
   CTAP 2.1 §6.3 itself does not promise extension outputs on a next
   assertion (read 2026-11-16, partly through a summary). The behaviour is
   measured, not specified, so the adapter must treat a missing output as "this
