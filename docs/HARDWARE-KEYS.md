@@ -639,6 +639,9 @@ The recommendations were accepted.
 - **H6**: use the Windows WebAuthn dialog.
 - **H7**: the FIDO2 salt is fixed per slot and independent of the header salt.
   Rotating the header salt does not require the finger (§5.1, §8.3 updated).
+  **Relaxed on 2026-11-16 by the user** with H2 revised: the `{password, key}`
+  slot's salt now follows the password's KEK, so re-salting needs the key for
+  that slot (see "H2 revised").
 
 ### H2 revised (2026-11-15, decision delegated by the user: « fait au mieux »)
 
@@ -694,8 +697,12 @@ What it costs, stated:
   firmware 5.7, 25 before.
 - **A key held with its PIN reveals that Theca credentials exist on it.** The
   key does not reveal which containers they belong to.
-- **⛔ It conflicts with decision H7, which is the user's: awaiting their
-  answer.** H7 says the FIDO2 salt is "independent of the header salt". Here
+- **H7 relaxed, decided by the user on 2026-11-16 (« prenons assoupli »),**
+  after the trade-off was explained in concrete terms: protection against a
+  thief holding the key, its PIN and a copy of the container (every password
+  guess costs a touch) was preferred to re-salting without the key, an
+  operation v0.1 does not have. H7 said the FIDO2 salt is "independent of the
+  header salt". Here
   the salt of the `{password, key}` slot depends on the password's KEK, which
   depends on the header salt. So re-salting the header needs the key (one
   touch) for that slot. A password change already needs the key in practice.
