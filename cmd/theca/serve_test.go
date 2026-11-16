@@ -201,6 +201,7 @@ type fakeShare struct {
 	stopped bool
 }
 
+func (f *fakeShare) Addr() string          { return "0.0.0.0:4455" }
 func (f *fakeShare) URL() string           { return "smb://127.0.0.1:1/theca" }
 func (f *fakeShare) User() string          { return "theca" }
 func (f *fakeShare) Password() string      { return "secret" }
@@ -273,6 +274,38 @@ func TestServeShareFailures(t *testing.T) {
 	}
 	if r := run(nil, "verify", path, "--password-file", pw); r.e != nil {
 		t.Fatalf("verify after failures: %v", r.e)
+	}
+}
+
+func TestServeNetwork(t *testing.T) {
+	noSignals(t)
+	_, path, pw := exfatContainer(t)
+	// Without --network a non-loopback address is refused, naming the flag.
+	r := runCtx(context.Background(), "serve", path, "--password-file", pw, "--mount", "--addr", "0.0.0.0:4455")
+	if r.e == nil || !strings.Contains(r.e.Error(), "--network") {
+		t.Fatalf("0.0.0.0 without --network: %v", r.e)
+	}
+	// With it, the options say so and the warning is on stderr, not stdout.
+	var got share.Options
+	saved := startShare
+	t.Cleanup(func() { startShare = saved })
+	fs := &fakeShare{done: make(chan struct{})}
+	close(fs.done)
+	startShare = func(_ context.Context, _ *theca.Container, o share.Options) (sharer, error) {
+		got = o
+		return fs, nil
+	}
+	r = runCtx(context.Background(), "serve", path, "--password-file", pw, "--mount", "--network", "--addr", "0.0.0.0:4455")
+	if r.e != nil || !got.Network || got.Addr != "0.0.0.0:4455" {
+		t.Fatalf("serve --network: %v %+v", r.e, got)
+	}
+	if !strings.Contains(r.err, "warning: --network: listening on 0.0.0.0:4455") || strings.Contains(r.out, "warning") {
+		t.Fatalf("stderr %q stdout %q", r.err, r.out)
+	}
+	// Loopback with no --network: no warning.
+	r = runCtx(context.Background(), "serve", path, "--password-file", pw, "--mount")
+	if got.Network || strings.Contains(r.err, "warning: --network") {
+		t.Fatalf("a plain serve warned: %q", r.err)
 	}
 }
 

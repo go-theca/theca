@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	smb2 "github.com/cloudsoda/go-smb2"
 	"github.com/go-fileshare/automount"
 	exfat "github.com/go-filesystems/exfat"
 	"github.com/go-filesystems/smb"
@@ -170,9 +171,103 @@ func TestStartRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	// localhost is a loopback name.
-	if err := CheckAddr("localhost:0"); err != nil {
+	if err := CheckAddr("localhost:0", false); err != nil {
 		t.Fatal(err)
 	}
+	// Without Network a refusal names it; with it any well-formed address passes.
+	if err := CheckAddr("0.0.0.0:4455", false); err == nil || !strings.Contains(err.Error(), "--network") {
+		t.Fatalf("0.0.0.0 without Network: %v", err)
+	}
+	for _, addr := range []string{"0.0.0.0:4455", "[::]:4455", "192.0.2.7:4455", "example.org:4455"} {
+		if err := CheckAddr(addr, true); err != nil {
+			t.Errorf("%s with Network: %v", addr, err)
+		}
+	}
+	if err := CheckAddr("nope", true); err == nil {
+		t.Error("a malformed address passed with Network")
+	}
+}
+
+func TestLocalHost(t *testing.T) {
+	for _, c := range []struct {
+		in   net.Addr
+		want string
+	}{
+		{&net.TCPAddr{IP: net.IPv4zero, Port: 4455}, "127.0.0.1:4455"},
+		{&net.TCPAddr{IP: net.IPv6unspecified, Port: 4455}, "127.0.0.1:4455"},
+		{&net.TCPAddr{IP: net.IPv4(192, 0, 2, 7), Port: 4455}, "192.0.2.7:4455"},
+		{&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 4455}, "127.0.0.1:4455"},
+		{&net.UnixAddr{Name: "sock", Net: "unix"}, "sock"},
+	} {
+		if got := localHost(c.in); got != c.want {
+			t.Errorf("localHost(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// dial opens an SMB session to the share as a client that is not ours.
+func dial(t *testing.T, s *Share, dialect uint16, signing bool) (*smb2.Share, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	d := &smb2.Dialer{
+		Negotiator: smb2.Negotiator{SpecifiedDialect: dialect, RequireMessageSigning: signing},
+		Initiator:  &smb2.NTLMInitiator{User: s.User(), Password: s.Password()},
+	}
+	sess, err := d.Dial(ctx, strings.TrimSuffix(strings.TrimPrefix(s.URL(), "smb://"), "/theca"))
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { sess.Logoff() })
+	return sess.Mount("theca")
+}
+
+// Beyond loopback the server requires signing AND encryption: a client that
+// can do both is served, one that cannot encrypt (SMB 2.1) is refused.
+func TestNetworkRequiresSigningAndEncryption(t *testing.T) {
+	c := newContainer(t, true)
+	o := opts()
+	o.Addr, o.Network = "0.0.0.0:0", true
+	s, err := Start(context.Background(), c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	if _, port, _ := net.SplitHostPort(s.Addr()); port == "" || !strings.HasPrefix(s.URL(), "smb://127.0.0.1:") {
+		t.Fatalf("Addr %q, URL %q", s.Addr(), s.URL())
+	}
+	// 3.1.1, the client does not ask for signing: the server insists.
+	fs, err := dial(t, s, 0x0311, false)
+	if err != nil {
+		t.Fatalf("a signing, encrypting client was refused: %v", err)
+	}
+	if err := fs.WriteFile("hello.txt", []byte("over the network"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := fs.ReadFile("hello.txt"); err != nil || string(b) != "over the network" {
+		t.Fatalf("read back %q: %v", b, err)
+	}
+	fs.Umount()
+	// 2.1 cannot encrypt: refused at the session or at the tree connect.
+	if fs, err := dial(t, s, 0x0210, false); err == nil {
+		fs.Umount()
+		t.Fatal("a client that cannot encrypt reached the share")
+	}
+}
+
+// Without Network on loopback nothing is imposed: a 2.1 client is served.
+func TestLoopbackImposesNothingExtra(t *testing.T) {
+	c := newContainer(t, true)
+	s, err := Start(context.Background(), c, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	fs, err := dial(t, s, 0x0210, false)
+	if err != nil {
+		t.Fatalf("a plain loopback client was refused: %v", err)
+	}
+	fs.Umount()
 }
 
 func TestShareEndsOnAFailure(t *testing.T) {

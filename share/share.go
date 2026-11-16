@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,10 +41,20 @@ var ErrNoFilesystem = errors.New("the container holds no exFAT filesystem")
 
 // Options configures Start.
 type Options struct {
-	Addr  string        // loopback address to listen on; "127.0.0.1:0" picks a free port
-	Name  string        // share name (required)
-	Sync  time.Duration // commit the container this often; must be positive
-	Mount bool          // mount the share in the file manager, with no password dialog
+	Addr string        // address to listen on; "127.0.0.1:0" picks a free loopback port
+	Name string        // share name (required)
+	Sync time.Duration // commit the container this often; must be positive
+	// Mount mounts the share in the file manager, with no password dialog. With
+	// an unspecified Addr (0.0.0.0, ::) the local mount uses the loopback
+	// address on the same port.
+	Mount bool
+	// Network allows an Addr that is not loopback. It is not a plain switch:
+	// the server then REQUIRES message signing and encryption of every session
+	// and of the share (go-filesystems/smb RequireSigning, EncryptData and
+	// RequireEncryption), so a client that cannot do both is refused. Anyone
+	// who can reach the address and has the password can read and write the
+	// container's files. False (the default): Addr must be loopback.
+	Network bool
 }
 
 // Format lays an exFAT filesystem (label THECA) onto the whole logical volume
@@ -59,19 +70,30 @@ func Format(c *theca.Container) error {
 	return fsys.Close()
 }
 
-// CheckAddr refuses an address that is not on the loopback interface: the
-// share carries decrypted data, and the SMB server still accepts a replayed
-// frame (go-filesystems/smb#53) and an unsigned request on a session that
-// requires signing (go-filesystems/smb#54).
-func CheckAddr(addr string) error {
+// CheckAddr refuses a malformed address, and unless network is set one that is
+// not on the loopback interface: the share carries decrypted data, and beyond
+// loopback it is served only with signing and encryption required (Network).
+func CheckAddr(addr string, network bool) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return err
 	}
-	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return fmt.Errorf("address %s: only a loopback address is served (the data is decrypted)", addr)
+	if ip := net.ParseIP(host); !network && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return fmt.Errorf("address %s: only a loopback address is served (the data is decrypted); Network (--network) serves another one, with signing and encryption required", addr)
 	}
 	return nil
+}
+
+// localHost is the host:port a client on this machine reaches a listener at:
+// the listener's own address, except that an unspecified IP (0.0.0.0, ::) is
+// not somewhere a client can connect, so it becomes 127.0.0.1 on the same
+// port. (Go binds both of them dual-stack, so 127.0.0.1 reaches either.)
+func localHost(a net.Addr) string {
+	t, ok := a.(*net.TCPAddr)
+	if !ok || !t.IP.IsUnspecified() {
+		return a.String()
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(t.Port))
 }
 
 // mounted is what a mount hands back: automount.Mounted, or a test's fake.
@@ -102,6 +124,7 @@ func asMounted(m *automount.Mounted, err error) (mounted, error) {
 // Share is a running share. Create one with Start; end it with Stop.
 type Share struct {
 	url      string
+	addr     string
 	password string
 	mnt      mounted
 	srv      *smb.Server
@@ -122,7 +145,7 @@ type Share struct {
 // A container with no exFAT inside is refused with ErrNoFilesystem. On any
 // error nothing is left running, and c is untouched.
 func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
-	if err := CheckAddr(o.Addr); err != nil {
+	if err := CheckAddr(o.Addr, o.Network); err != nil {
 		return nil, err
 	}
 	if o.Sync <= 0 {
@@ -140,15 +163,23 @@ func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
 	rand.Read(pw)
 	password := base64.RawURLEncoding.EncodeToString(pw)
 	clear(pw)
-	u := &url.URL{Scheme: "smb", Host: ln.Addr().String(), Path: "/" + o.Name}
+	u := &url.URL{Scheme: "smb", Host: localHost(ln.Addr()), Path: "/" + o.Name}
 	srv := smb.New()
 	srv.SetName("THECA")
 	srv.AddUser(User, password)
-	if err := srv.Share(o.Name, fsys, smb.AllowUsers(User)); err != nil {
+	shareOpts := []smb.ShareOption{smb.AllowUsers(User)}
+	if o.Network {
+		// Beyond loopback, both or nothing: a session that does not sign and
+		// encrypt is refused, and so is a share reached without encryption.
+		srv.RequireSigning = true
+		srv.EncryptData = true
+		shareOpts = append(shareOpts, smb.RequireEncryption())
+	}
+	if err := srv.Share(o.Name, fsys, shareOpts...); err != nil {
 		return nil, errors.Join(err, ln.Close(), fsys.Close())
 	}
 	s := &Share{
-		url: u.String(), password: password, srv: srv, fsys: fsys,
+		url: u.String(), addr: ln.Addr().String(), password: password, srv: srv, fsys: fsys,
 		stopCh: make(chan struct{}), done: make(chan struct{}),
 	}
 	served := make(chan error, 1)
@@ -189,8 +220,15 @@ func (s *Share) loop(ctx context.Context, c *theca.Container, served <-chan erro
 	}
 }
 
-// URL is the share's address, for example smb://127.0.0.1:58738/theca.
+// URL is the share's address as a client on this machine reaches it, for
+// example smb://127.0.0.1:58738/theca. When listening on an unspecified
+// address (0.0.0.0, ::) it names the loopback address on the same port; a
+// client elsewhere uses this machine's address with that port.
 func (s *Share) URL() string { return s.url }
+
+// Addr is the address the share listens on, as bound, for example
+// 0.0.0.0:4455.
+func (s *Share) Addr() string { return s.addr }
 
 // User is the account name of the share.
 func (s *Share) User() string { return User }
