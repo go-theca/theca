@@ -60,9 +60,8 @@ theca serve vault.theca --credentials-out creds.json   # or: hand the account to
   disk.
 - `serve` unlocks the container and serves its exFAT over SMB (2.1 to 3.1.1,
   signed) using go-filesystems/smb.
-  - It listens on a **loopback address only**: the data is decrypted, and the
-    SMB server still accepts a replayed frame (go-filesystems/smb#53) and an
-    unsigned request on a session that requires signing (go-filesystems/smb#54).
+  - It listens on a **loopback address only** by default: the data is
+    decrypted. See "Beyond loopback" below.
   - One random account is drawn per run, never printed or passed as an
     argument.
   - `--mount` mounts the share in the file manager with **no password
@@ -82,6 +81,28 @@ theca serve vault.theca --credentials-out creds.json   # or: hand the account to
 - A copy of a file written through the share is one transaction per journal
   budget, not one per file (DESIGN §19 I12). A crash in the middle of a large
   copy can leave the exFAT metadata of that copy half-written, as on a disk.
+
+#### Beyond loopback: `--network`
+
+```sh
+theca serve vault.theca --network --addr 0.0.0.0:4455 --mount --credentials-out creds.json
+```
+
+A non-loopback `--addr` is refused unless `--network` is given (the library:
+`share.Options{Network: true}`). It is one switch, not a knob per protection:
+the server is then started with **message signing required, encryption required
+of every session, and encryption required of the share**
+(go-filesystems/smb v0.15.0 `RequireSigning`, `EncryptData`, `RequireEncryption`),
+and a client that cannot do both (SMB 2.1, or one that refuses encryption) is
+refused. That is the only condition under which three independent security
+reviews found serving beyond loopback acceptable. It does not make it safe for
+a hostile network: anyone who can reach the address and has the password can
+read and write the container's files, and the password is in `--credentials-out`.
+`serve` prints a warning on standard error. With `--mount` and an unspecified
+address (`0.0.0.0`, `::`), the local mount uses `127.0.0.1` on the same port;
+another machine uses this machine's address with that port. The server bounds
+its connections and what an unauthenticated one may hold (smb v0.15.0 defaults).
+The GUI has no network option: it always serves loopback.
 
 ### FIDO2 security keys
 

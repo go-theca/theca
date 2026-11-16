@@ -47,6 +47,7 @@ func writeCredentials(path string, cr credentials) error {
 // sharer is what serve needs of a running share: *share.Share, or a test's fake.
 type sharer interface {
 	URL() string
+	Addr() string
 	User() string
 	Password() string
 	MountPath() string
@@ -73,12 +74,13 @@ func serveCmd() *cobra.Command {
 	var s secrets
 	var addr, name, credOut string
 	var every time.Duration
-	var doMount bool
+	var doMount, network bool
 	cmd := &cobra.Command{
 		Use:   "serve FILE",
-		Short: "Serve the container's filesystem over SMB on a loopback address until interrupted",
+		Short: "Serve the container's filesystem over SMB on a loopback address (or, with --network, any) until interrupted",
 		Long: "Unlock the container and serve the exFAT filesystem inside it over SMB on a\n" +
-			"loopback address, until Ctrl-C. One account is drawn at random, never printed\n" +
+			"loopback address (--network: any address, with signing AND encryption\n" +
+			"required of every client), until Ctrl-C. One account is drawn at random, never printed\n" +
 			"or passed as an argument. --mount mounts the share in the file manager\n" +
 			"(Finder, GNOME Files, Explorer) with no password dialog, and unmounts it at\n" +
 			"stop; --credentials-out writes the URL, user and password to a file (mode\n" +
@@ -89,7 +91,7 @@ func serveCmd() *cobra.Command {
 			if credOut == "" && !doMount {
 				return errors.New("nothing could reach the share: give --mount, or --credentials-out to write its password to a file")
 			}
-			if err := share.CheckAddr(addr); err != nil {
+			if err := share.CheckAddr(addr, network); err != nil {
 				return err
 			}
 			if every <= 0 {
@@ -101,7 +103,7 @@ func serveCmd() *cobra.Command {
 			}
 			ctx, stop := stopSignals(cmd.Context())
 			defer stop()
-			sh, err := startShare(ctx, c, share.Options{Addr: addr, Name: name, Sync: every, Mount: doMount})
+			sh, err := startShare(ctx, c, share.Options{Addr: addr, Name: name, Sync: every, Mount: doMount, Network: network})
 			if err != nil {
 				if errors.Is(err, share.ErrNoFilesystem) {
 					err = fmt.Errorf("%w (create one with --fs exfat)", err)
@@ -114,6 +116,9 @@ func serveCmd() *cobra.Command {
 					return closeBoth(c, f, errors.Join(err, sh.Stop()))
 				}
 				defer os.Remove(credOut)
+			}
+			if network {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: --network: listening on %s; anyone on the network who can reach it and has the password can read and write the container's files (every client must sign and encrypt); the password is in --credentials-out\n", sh.Addr())
 			}
 			out := cmd.OutOrStdout()
 			if credOut != "" {
@@ -132,6 +137,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:0", "loopback address to listen on (port 0: a free one)")
 	cmd.Flags().StringVar(&name, "share", "theca", "share name")
 	cmd.Flags().StringVar(&credOut, "credentials-out", "", "write the share's URL, user and password here (mode 0600, removed at exit)")
+	cmd.Flags().BoolVar(&network, "network", false, "allow a --addr that is not loopback: signing and encryption are then REQUIRED of every client")
 	cmd.Flags().BoolVar(&doMount, "mount", false, "mount the share in the file manager (no password dialog) and unmount it at stop")
 	cmd.Flags().DurationVar(&every, "sync", 5*time.Second, "commit writes to the container this often")
 	return cmd
