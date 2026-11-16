@@ -344,19 +344,22 @@ func RootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd())
+	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd(), serveCmd())
 	return root
 }
 
 func createCmd() *cobra.Command {
 	var s secrets
-	var size, policy string
+	var size, policy, fsKind string
 	var journal uint32
 	cmd := &cobra.Command{
 		Use:   "create FILE",
 		Short: "Create a new container; prints the recovery code once",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if fsKind != "" && fsKind != "exfat" {
+				return fmt.Errorf("--fs %q: want exfat (or nothing for a raw volume)", fsKind)
+			}
 			n, err := parseSize(size)
 			if err != nil {
 				return err
@@ -397,6 +400,11 @@ func createCmd() *cobra.Command {
 				Sectors: n / theca.SectorSize, JournalEntries: journal, Hint: s.hint,
 				Password: pw, Policy: pol,
 			})
+			if err == nil {
+				if err = formatFS(c, fsKind); err != nil {
+					c.Close()
+				}
+			}
 			if err != nil {
 				f.Close()
 				os.Remove(args[0])
@@ -413,6 +421,7 @@ func createCmd() *cobra.Command {
 	s.flags(cmd)
 	cmd.Flags().StringVar(&size, "size", "", "logical size, a multiple of 4096 bytes (suffixes K, M, G, T)")
 	cmd.Flags().StringVar(&policy, "policy", "any", "any: password or recovery code alone opens it; 2of3: both are needed")
+	cmd.Flags().StringVar(&fsKind, "fs", "", "format the volume with this filesystem: exfat (serve needs one); empty: a raw volume")
 	cmd.Flags().Uint32Var(&journal, "journal", 0, "journal entries (0: the default)")
 	cmd.MarkFlagRequired("size")
 	return cmd

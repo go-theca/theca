@@ -45,6 +45,31 @@ theca export vault.theca --password-file pw > disk.img
   rollback. In this version it never is: there is no hardware counter on the
   command line yet, so an older copy of a container would be accepted.
 
+### Serving the files inside: SMB on loopback
+
+```sh
+theca create vault.theca --size 4G --fs exfat      # a container holding an exFAT filesystem
+theca serve vault.theca --credentials-out creds.json
+# serving smb://127.0.0.1:52817/theca (credentials in creds.json); Ctrl-C to stop
+```
+
+- `create --fs exfat` formats the volume through the container itself
+  (go-filesystems/exfat `FormatImage`). No decrypted copy is ever written to
+  disk.
+- `serve` unlocks the container and serves its exFAT over SMB 2.1/3.0/3.0.2,
+  signed, using go-filesystems/smb.
+  - It listens on a **loopback address only**: the data is decrypted, and SMB
+    encryption is not implemented yet.
+  - One random account is written to `--credentials-out` (mode `0600`,
+    removed at exit), never printed or passed as an argument.
+  - Writes are committed to the container every `--sync` (default 5 s) and
+    when the server stops.
+- An automatic mount in the Finder, GNOME Files and Windows Explorer is in
+  progress (go-macos/netfs, go-freedesktop/gvfs, go-mswin/win32).
+- A copy of a file written through the share is one transaction per journal
+  budget, not one per file (DESIGN §19 I12). A crash in the middle of a large
+  copy can leave the exFAT metadata of that copy half-written, as on a disk.
+
 ### FIDO2 security keys
 
 ```sh
