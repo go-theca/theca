@@ -118,6 +118,26 @@ c, err := theca.Open(ctx, theca.FileBacking{File: f}, theca.Unlock{Password: pw}
 // c is an io.ReaderAt and io.WriterAt over the logical volume; Sync commits.
 ```
 
+### Sharing the files inside (package `share`)
+
+What `theca serve` does, as a library (a GUI imports this, not package main):
+
+```go
+s, err := share.Start(ctx, c, share.Options{
+	Addr: "127.0.0.1:0", Name: "theca", Sync: 5 * time.Second, Mount: true,
+})
+if err != nil { // share.ErrNoFilesystem: no exFAT inside
+	return err
+}
+fmt.Println(s.URL(), s.MountPath()) // smb://127.0.0.1:58738/theca /Volumes/theca
+// <-s.Done() fires when a commit or the server fails; s.Err() says why.
+err = s.Stop() // unmount, close the server, close the filesystem (idempotent)
+c.Close()      // the caller closes the container, after Stop
+```
+
+Only a loopback address is served. `Password()` exists to hand the account to
+another client; it is a secret, never to be shown or logged.
+
 ## License
 
 BSD-3-Clause.

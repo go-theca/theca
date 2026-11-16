@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.3.0
+
+- New package `github.com/go-theca/theca/share`: the logic of `serve` as a
+  library, so a GUI can import it. `share.Start(ctx, c, Options{Addr, Name,
+  Sync, Mount})` serves the exFAT inside an unlocked container over SMB on
+  loopback and optionally mounts it; `URL`, `User`, `Password` (a secret),
+  `MountPath`, `Done`/`Err` (a failed commit or server ends the share) and an
+  idempotent `Stop` (unmount, close the server, close the filesystem; never the
+  container). A container with no exFAT is refused with `share.ErrNoFilesystem`.
+- `theca serve` is a thin front over it. Behaviour is unchanged, except that
+  the address error now reads `address X: only a loopback address is served`
+  and a failed mount no longer prints the `serving` line first.
+
+## v0.2.0
 
 - `create --fs exfat`: the volume is formatted through the container itself.
 - `serve`: the exFAT inside is served over SMB on loopback, with one random
