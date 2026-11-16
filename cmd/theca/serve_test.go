@@ -6,18 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-fileshare/automount"
 	exfat "github.com/go-filesystems/exfat"
-	"github.com/go-filesystems/smb"
 
 	"github.com/go-theca/theca"
+	"github.com/go-theca/theca/share"
 )
 
 // runCtx is run with a context, so a test can stop a serve.
@@ -133,7 +131,7 @@ func TestServeLifecycle(t *testing.T) {
 	if st, _ := os.Stat(creds); st.Mode().Perm() != 0o600 {
 		t.Fatalf("credentials mode %04o", st.Mode().Perm())
 	}
-	if cr.User != shareUser || len(cr.Password) < 30 || !strings.HasPrefix(cr.URL, "smb://127.0.0.1:") || !strings.HasSuffix(cr.URL, "/theca") {
+	if cr.User != share.User || len(cr.Password) < 30 || !strings.HasPrefix(cr.URL, "smb://127.0.0.1:") || !strings.HasSuffix(cr.URL, "/theca") {
 		t.Fatalf("credentials %+v", cr)
 	}
 	// The port answers.
@@ -188,140 +186,102 @@ func TestServeRefusals(t *testing.T) {
 	if _, err := os.Stat(creds); !os.IsNotExist(err) {
 		t.Fatal("a refused serve left a credentials file")
 	}
-	// localhost is a loopback name.
-	if err := loopbackOnly("localhost:0"); err != nil {
-		t.Fatal(err)
+	// The hint for a container with no filesystem names the fix.
+	r := runCtx(context.Background(), "serve", raw, "--password-file", rawPW, "--credentials-out", creds)
+	if !errors.Is(r.e, share.ErrNoFilesystem) || !strings.Contains(r.e.Error(), "--fs exfat") {
+		t.Fatalf("raw volume: %v", r.e)
 	}
 }
 
-func TestServeStopsOnAFailure(t *testing.T) {
-	noSignals(t)
-	dir, path, pw := exfatContainer(t)
-	boom := errors.New("boom")
-
-	// The commit failing stops the server and reports it.
-	savedSync := syncContainer
-	t.Cleanup(func() { syncContainer = savedSync })
-	syncContainer = func(*theca.Container) error { return boom }
-	r := runCtx(context.Background(), "serve", path, "--password-file", pw, "--credentials-out", filepath.Join(dir, "c1"), "--sync", "1ms")
-	if !errors.Is(r.e, boom) {
-		t.Fatalf("sync failure: %v", r.e)
-	}
-	syncContainer = savedSync
-
-	// The server failing stops it too.
-	savedServe := serveSMB
-	t.Cleanup(func() { serveSMB = savedServe })
-	serveSMB = func(*smb.Server, net.Listener) error { return boom }
-	r = runCtx(context.Background(), "serve", path, "--password-file", pw, "--credentials-out", filepath.Join(dir, "c2"))
-	if !errors.Is(r.e, boom) {
-		t.Fatalf("server failure: %v", r.e)
-	}
+// fakeShare stands in for a running share.
+type fakeShare struct {
+	mount   string
+	done    chan struct{}
+	stopErr error
+	stopped bool
 }
 
-// fakeMount records what serve asked of the OS mount.
-type fakeMount struct {
-	mounted   chan struct{}
-	url, user string
-	pwLen     int
-	unmounted bool
-	unmountTo error
-}
+func (f *fakeShare) URL() string           { return "smb://127.0.0.1:1/theca" }
+func (f *fakeShare) User() string          { return "theca" }
+func (f *fakeShare) Password() string      { return "secret" }
+func (f *fakeShare) MountPath() string     { return f.mount }
+func (f *fakeShare) Done() <-chan struct{} { return f.done }
+func (f *fakeShare) Stop() error           { f.stopped = true; return f.stopErr }
 
-func (m *fakeMount) Path() string { return "/Volumes/theca" }
-func (m *fakeMount) Unmount(ctx context.Context) error {
-	if ctx.Err() != nil {
-		return ctx.Err() // the stop context must not reach the unmount
-	}
-	m.unmounted = true
-	return m.unmountTo
-}
-
-func withFakeMount(t *testing.T, fm *fakeMount, mountErr error) {
+func withFakeShare(t *testing.T, fs *fakeShare, startErr error) {
 	t.Helper()
-	saved := mountShare
-	t.Cleanup(func() { mountShare = saved })
-	mountShare = func(ctx context.Context, u *url.URL, user, password string) (mounted, error) {
-		fm.url, fm.user, fm.pwLen = u.String(), user, len(password)
-		close(fm.mounted)
-		if mountErr != nil {
-			return nil, mountErr
+	saved := startShare
+	t.Cleanup(func() { startShare = saved })
+	startShare = func(context.Context, *theca.Container, share.Options) (sharer, error) {
+		if startErr != nil {
+			return nil, startErr
 		}
-		return fm, nil
+		return fs, nil
 	}
 }
 
-func TestServeMount(t *testing.T) {
+func TestServeMountOutput(t *testing.T) {
 	noSignals(t)
 	_, path, pw := exfatContainer(t)
-	fm := &fakeMount{mounted: make(chan struct{})}
-	withFakeMount(t, fm, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan result, 1)
-	go func() { done <- runCtx(ctx, "serve", path, "--password-file", pw, "--mount", "--sync", "10ms") }()
-	<-fm.mounted
-	time.Sleep(30 * time.Millisecond)
-	cancel()
-	r := <-done
+	fs := &fakeShare{mount: "/Volumes/theca", done: make(chan struct{})}
+	close(fs.done)
+	withFakeShare(t, fs, nil)
+	r := runCtx(context.Background(), "serve", path, "--password-file", pw, "--mount")
 	if r.e != nil {
 		t.Fatalf("serve --mount: %v %q", r.e, r.err)
 	}
-	if !strings.HasPrefix(fm.url, "smb://127.0.0.1:") || !strings.HasSuffix(fm.url, "/theca") || fm.user != shareUser || fm.pwLen < 30 {
-		t.Fatalf("mounted %q as %q (password %d chars)", fm.url, fm.user, fm.pwLen)
-	}
-	if !fm.unmounted {
-		t.Fatal("not unmounted at stop")
-	}
-	if !strings.Contains(r.out, "mounted at /Volumes/theca") || strings.Contains(r.out, "credentials in") {
-		t.Fatalf("output %q", r.out)
+	if !fs.stopped || !strings.Contains(r.out, "mounted at /Volumes/theca") || strings.Contains(r.out, "credentials in") {
+		t.Fatalf("stopped=%v output %q", fs.stopped, r.out)
 	}
 	if r := run(nil, "verify", path, "--password-file", pw); r.e != nil {
 		t.Fatalf("verify after serve --mount: %v", r.e)
 	}
 }
 
-func TestServeMountFailures(t *testing.T) {
+func TestServeShareFailures(t *testing.T) {
 	noSignals(t)
 	dir, path, pw := exfatContainer(t)
 	boom := errors.New("boom")
 
-	// A mount that fails stops serve, removes the credentials file, and says so.
+	// A share that fails to start is reported, and the container is closed.
+	withFakeShare(t, nil, boom)
 	creds := filepath.Join(dir, "creds.json")
-	withFakeMount(t, &fakeMount{mounted: make(chan struct{})}, boom)
 	r := runCtx(context.Background(), "serve", path, "--password-file", pw, "--mount", "--credentials-out", creds)
-	if !errors.Is(r.e, boom) || !strings.Contains(r.e.Error(), "mounting smb://127.0.0.1:") {
-		t.Fatalf("mount failure: %v", r.e)
+	if !errors.Is(r.e, boom) {
+		t.Fatalf("start failure: %v", r.e)
 	}
 	if _, err := os.Stat(creds); !os.IsNotExist(err) {
 		t.Fatal("credentials file left behind")
 	}
 
-	// An unmount that fails is reported, and the container is still closed.
-	fm := &fakeMount{mounted: make(chan struct{}), unmountTo: boom}
-	withFakeMount(t, fm, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan result, 1)
-	go func() { done <- runCtx(ctx, "serve", path, "--password-file", pw, "--mount") }()
-	<-fm.mounted
-	cancel()
-	r = <-done
-	if !errors.Is(r.e, boom) || !strings.Contains(r.e.Error(), "unmounting /Volumes/theca") {
-		t.Fatalf("unmount failure: %v", r.e)
+	// A share that ends with an error reports it from Stop.
+	fs := &fakeShare{done: make(chan struct{}), stopErr: boom}
+	close(fs.done)
+	withFakeShare(t, fs, nil)
+	r = runCtx(context.Background(), "serve", path, "--password-file", pw, "--credentials-out", creds)
+	if !errors.Is(r.e, boom) {
+		t.Fatalf("stop failure: %v", r.e)
+	}
+
+	// Credentials that cannot be written stop the share.
+	fs = &fakeShare{done: make(chan struct{})}
+	withFakeShare(t, fs, nil)
+	existing := secretFile(t, dir, "exists", "x", 0o600)
+	r = runCtx(context.Background(), "serve", path, "--password-file", pw, "--credentials-out", existing)
+	if r.e == nil || !fs.stopped {
+		t.Fatalf("credentials exist: %v stopped=%v", r.e, fs.stopped)
 	}
 	if r := run(nil, "verify", path, "--password-file", pw); r.e != nil {
-		t.Fatalf("verify after a failed unmount: %v", r.e)
+		t.Fatalf("verify after failures: %v", r.e)
 	}
 }
 
-func TestMountShareDefault(t *testing.T) {
-	// The real seam reaches automount: a URL it refuses comes back as an
-	// error and a nil interface, never a typed nil.
-	m, err := mountShare(context.Background(), &url.URL{Scheme: "http", Host: "127.0.0.1:1", Path: "/x"}, "u", "p")
-	if err == nil || m != nil {
-		t.Fatalf("http URL: %v %v", m, err)
-	}
-	if m, err := asMounted(&automount.Mounted{}, nil); err != nil || m == nil {
-		t.Fatalf("asMounted: %v %v", m, err)
+func TestStartShareDefault(t *testing.T) {
+	// The real seam reaches share.Start: a refusal comes back as an error and
+	// a nil interface, never a typed nil.
+	sh, err := startShare(context.Background(), nil, share.Options{Addr: "0.0.0.0:0", Name: "theca", Sync: time.Second})
+	if err == nil || sh != nil {
+		t.Fatalf("network address: %v %v", sh, err)
 	}
 }
 
