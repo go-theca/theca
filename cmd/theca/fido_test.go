@@ -173,3 +173,5 @@ func TestEnrollKeyRefusals(t *testing.T) {
 		t.Fatal("empty container accepted")
 	}
 }
+
+func TestTheNoticeGoesToStderr(t *testing.T) { printNotice("Fingerprint blocked — using the PIN.") }

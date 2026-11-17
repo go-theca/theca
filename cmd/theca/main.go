@@ -230,8 +230,12 @@ type fidoDevice interface {
 
 // openFIDO opens the attached security key; tests replace it.
 var openFIDO = func(ctx context.Context, pin func() (string, error)) (fidoDevice, error) {
-	return fido2.Open(ctx, pin)
+	return fido2.Open(ctx, pin, fido2.WithNotice(printNotice))
 }
+
+// printNotice shows what the key layer does on the person's behalf (a
+// fingerprint retry, the fall back to the PIN).
+func printNotice(m string) { fmt.Fprintln(os.Stderr, m) }
 
 func (s *secrets) password(cmd *cobra.Command, prompt string) ([]byte, error) {
 	if s.passwordFile != "" {

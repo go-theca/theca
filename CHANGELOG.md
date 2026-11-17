@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.10.3
+
+- FIDO2: a key whose fingerprint fails falls back to its PIN. Built-in
+  verification is used only when GetInfo says `uv` is true (CTAP 2.1 6.4); on
+  CTAP2_ERR_UV_INVALID the tries left are read (getUVRetries) and shown, and on
+  UV_BLOCKED, no tries left, or no fingerprint enrolled (NOT_ALLOWED) theca says
+  so and uses the PIN when one is set (6.5.5.7.3 note), else `ErrUVLocked`.
+  Not measured on a real YubiKey Bio.
+
 ## v0.10.2
 
 - **Fix: a second mount in the same macOS session failed** ("authentication
