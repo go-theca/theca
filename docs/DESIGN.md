@@ -467,7 +467,8 @@ refuse, warn, or record "rollback-unprotected" in the header?
 - Salt: 32 bytes at a fixed offset, random. One salt is shared by all password
   slots, so unlocking costs **one** Argon2id evaluation followed by cheap trial
   decryptions of each slot (§9.2).
-- Implementation: `golang.org/x/crypto/argon2` (`IDKey`). In module v0.59.0
+- Implementation: `github.com/go-encryptions/argon2` (`IDKey`), the code of
+  `golang.org/x/crypto/argon2` plus a NEON kernel on arm64. In x/crypto v0.59.0
   the BlaMka kernel has amd64 (SSE4.1) and loong64 assembly and **no arm64
   assembly**, so Apple Silicon runs generic Go. Expect a gap against the
   reference C on arm64 (§11).
@@ -737,9 +738,9 @@ from one version, suite or purpose is never valid in another.
 | Primitive | Theca implementation | Reference to beat or match |
 |---|---|---|
 | XChaCha20 keystream | `golang.org/x/crypto/chacha20` | libsodium `crypto_stream_xchacha20`; OpenSSL `speed -evp chacha20` |
-| AES-256-CTR | Go `crypto/aes` + `crypto/cipher` CTR | OpenSSL `speed -evp aes-256-ctr` |
+| AES-256-CTR | `go-encryptions/ctr` (round keys expanded once) | OpenSSL `speed -evp aes-256-ctr` |
 | HMAC-SHA-256 | Go `crypto/hmac` + `crypto/sha256` | OpenSSL `speed -hmac sha256`; libsodium `crypto_auth_hmacsha256` |
-| Argon2id (t=1, p=4, 2 GiB; one thread) | `golang.org/x/crypto/argon2` | P-H-C `phc-winner-argon2` reference CLI, threads=1 |
+| Argon2id (t=1, p=4, 2 GiB; one thread) | `go-encryptions/argon2` | P-H-C `phc-winner-argon2` reference CLI, threads=1 |
 | Composite Theca-A per 4 KiB sector | ours | Sum of the three primitives' costs + ≤ 5%; and VeraCrypt AES-Twofish-Serpent XTS (go-fde/veracrypt) as the competitor |
 | (later) HCTR2 | to port | google/hctr2 benchmarks; Linux `hctr2` |
 

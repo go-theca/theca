@@ -28,10 +28,10 @@ On the Zen 4 machine, libsodium's XChaCha20 and Argon2id run far below their usu
 | case | Go side | C reference |
 |---|---|---|
 | `Sector/XChaCha20` | `x/crypto/chacha20`, one cipher per sector (as `internal/ta1`) | libsodium `crypto_stream_xchacha20_xor` |
-| `Sector/AES-256-CTR` | `crypto/aes` + `cipher.NewCTR`, one per sector | OpenSSL EVP `aes-256-ctr`, key schedule reused |
+| `Sector/AES-256-CTR` | `go-encryptions/ctr`, round keys expanded once, one kernel call per sector | OpenSSL EVP `aes-256-ctr`, key schedule reused |
 | `Sector/Tag (HMAC-SHA-256)` | `ta1.Keys.SectorTag` | OpenSSL `EVP_MAC` HMAC-SHA256, key reused |
 | `Sector/Seal`, `Sector/Open` | `ta1.Keys.SealSector`, `OpenSector` | the same composition in C |
-| `Argon2id/t3-m64MiB-p1` | `x/crypto/argon2.IDKey`, one lane | libsodium `crypto_pwhash` (Argon2id v1.3) |
+| `Argon2id/t3-m64MiB-p1` | `go-encryptions/argon2.IDKey` (x/crypto's code, NEON BLAMKA on arm64), one lane | libsodium `crypto_pwhash` (Argon2id v1.3) |
 
 The C side uses each library the way a careful C implementation would, reusing key schedules across sectors. A gap in a row therefore includes Theca's own per-sector setup cost, which is a cost of the design and not of the language.
 
