@@ -26,8 +26,8 @@ github.com/go-filesystems/interface v0.6.0 h1:+7nA5FHgs/B03rZ9p81bkm0+6ew9fEntTF
 github.com/go-filesystems/interface v0.6.0/go.mod h1:u9v8mvapNV8djzObwCECdyd2g6JBU6HNTR4EAqxOn6U=
 github.com/go-filesystems/kerneljudge v0.3.1 h1:XEzYYvR1V8PYfZ5BwR8YJjvkvaYgOHacxf2pdIb1Ggk=
 github.com/go-filesystems/kerneljudge v0.3.1/go.mod h1:SK6ri2WMRBATCd+RUhsOn+gLCy+F41a1VGebjQECZgs=
-github.com/go-filesystems/smb v0.15.0 h1:v7su5phfdhrGn9n/0bYoP/hUWhrIRy3SoEjiMWmZhdM=
-github.com/go-filesystems/smb v0.15.0/go.mod h1:0tst9r4AXFO7lU29kKjDVi8wEl1hIOCwzexq90hmNBg=
+github.com/go-filesystems/smb v0.16.1 h1:3N8dGJfubyxsPV2oOgKlUePgO/YV6G0gcP9Ll8kP5a8=
+github.com/go-filesystems/smb v0.16.1/go.mod h1:0tst9r4AXFO7lU29kKjDVi8wEl1hIOCwzexq90hmNBg=
 github.com/go-freedesktop/gvfs v0.1.1 h1:mzp3qJq9qucK3eFeJMLuImpbXlS/cgxP41wnHBEIcpc=
 github.com/go-freedesktop/gvfs v0.1.1/go.mod h1:/2thANqVEah4mNw2WYi9oSTwjI2+GBLpxcXyikC+Ers=
 github.com/go-macos/fido v0.5.2 h1:isRgU81f8G/duQ79yaKYe1rP5+dmf48oE0NBLaep70o=
