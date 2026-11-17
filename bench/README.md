@@ -23,7 +23,7 @@ Two machines are measured:
 - [`docs/perf-table.md`](../docs/perf-table.md): Apple M4 Max.
 - [`docs/perf-zen4-table.md`](../docs/perf-zen4-table.md): AMD Ryzen 9 7950X, pinned to one CPU with `taskset`.
 
-On the Zen 4 machine, libsodium's XChaCha20 and Argon2id run far below their usual AVX2 speed (about 440 MB/s, and 4× slower than Go's Argon2id). The registry's libsodium may be built without its SIMD code. Until a control with another libsodium build settles this, the "faster" verdicts in those two rows are **not** claims.
+On the Zen 4 machine, libsodium's XChaCha20 runs far below its usual AVX2 speed (about 440 MB/s) and its Argon2id is 4× slower than Go's. The registry's libsodium 1.0.22 does contain the AVX2 and AVX-512F code (`argon2-fill-block-avx2.c`, `-avx512f.c`, `chacha20_dolbeau-avx2.c`) and `sodium_runtime_has_avx2()` and `_avx512f()` both report 1 on that CPU. A control of 2026-11-17, a C program calling `crypto_pwhash` (Argon2id, t=3, m=64 MiB, one lane) pinned to the same core, gives 265 ms with the registry build and 265 to 271 ms with the legacy pkgx build of 1.0.22: two builds agree, so the Argon2id row is measured, not an artefact of one build. The XChaCha20 row has no such control yet.
 
 | case | Go side | C reference |
 |---|---|---|
