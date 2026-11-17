@@ -151,13 +151,25 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
   touch).
 - A key without a fingerprint asks for its PIN. It is read from `--pin-file`
   (mode `0600` or stricter) or from the terminal, never from an argument.
-- macOS only for now (go-macos/fido). Tested on a YubiKey 5, firmware 5.7.4.
+- What each OS does (the transport is chosen by `GOOS`):
+
+  | OS | Route | PIN and prompts | Status |
+  | --- | --- | --- | --- |
+  | macOS | CTAP over IOKit HID (go-macos/fido) | theca asks: `--pin-file` or the terminal | measured on a YubiKey 5, firmware 5.7.4 |
+  | Linux | CTAP over `/dev/hidraw*` (go-gnulinux/fido), pure Go | theca asks, as on macOS | fakes and a kernel-made HID device only; **not measured on a real key** |
+  | Windows | `webauthn.dll` (go-mswin/webauthn), because Windows 10 1903+ refuses raw HID to a process that is not elevated | **Windows asks**: a Windows Security dialog collects the PIN or fingerprint, so `--pin-file` does not apply | fakes and struct layouts only; **not measured on a real key** |
+
+  On Linux `/dev/hidraw*` belongs to root on a stock system: install a udev
+  rule giving your user access to FIDO keys (libfido2's `70-u2f.rules`); theca
+  then says "a security key is attached but this user cannot open it" instead
+  of "no key". On Windows, hmac-secret needs WebAuthn API version 6
+  (`webauthn.h`; Windows 11 reports 9). When several Theca credentials are on
+  the key, Windows has the person pick one, and only that one is tried.
 
 Design and trade-offs: [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md) §9
 "H2 revised", and [docs/DESIGN.md](docs/DESIGN.md) §19 I21.
 
-Not in this version: FIDO2 on Linux and Windows, the TPM counter,
-slot management for FIDO2 factor sets on the command line (`slots` handles the
+Not in this version: slot management for FIDO2 factor sets on the command line (`slots` handles the
 password and the recovery code).
 
 ## Library

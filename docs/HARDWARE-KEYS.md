@@ -735,6 +735,21 @@ What it costs, stated:
   password took one touch and opened the container. The password alone was
   refused ("no factor opened a keyslot").
 
+  **Linux and Windows (2026-11-17).** The same adapter runs on Linux over
+  go-gnulinux/fido (hidraw; the FIDO usage page 0xF1D0 is read from the report
+  descriptor; needs a udev rule for the user). Windows 10 1903+ refuses HID to
+  a non-elevated process (go-mswin/webauthn README), so Windows goes through
+  `webauthn.dll` (Microsoft `webauthn.h`): MakeCredential with the `hmac-secret`
+  (BOOL) and `credProtect` extensions, then GetAssertion with the salts in
+  `pHmacSecretSaltValues` (options v6, API version 6) and
+  `WEBAUTHN_AUTHENTICATOR_HMAC_SECRET_VALUES_FLAG` so they reach the key RAW.
+  Differences, by construction: Windows owns the PIN and the verification UI
+  (a Windows Security dialog; `--pin-file` is ignored), and with several
+  Theca credentials Windows lets the person choose one, so Derive returns one
+  candidate instead of all. **Not measured** on a real key on either OS: Linux
+  was tested with fakes and a kernel-made HID device (go-gnulinux/fido), Windows
+  with fakes and layout checks on a Windows VM (API version 9) that has no key.
+
   CTAP 2.1 §6.3 itself does not promise extension outputs on a next
   assertion (read 2026-11-16, partly through a summary). The behaviour is
   measured, not specified, so the adapter must treat a missing output as "this

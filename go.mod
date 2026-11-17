@@ -10,7 +10,9 @@ require (
 	github.com/go-fileshare/automount v0.1.1
 	github.com/go-filesystems/exfat v0.7.0
 	github.com/go-filesystems/smb v0.16.1
+	github.com/go-gnulinux/fido v0.5.1
 	github.com/go-macos/fido v0.5.2
+	github.com/go-mswin/webauthn v0.5.0
 	github.com/go-scikit/refbench v0.3.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.59.0

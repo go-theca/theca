@@ -36,6 +36,8 @@ github.com/go-fleettools/fleettools v0.81.0 h1:UnMflmNw5b82Z+7Ums7UVaW5RrGuACCVm
 github.com/go-fleettools/fleettools v0.81.0/go.mod h1:y/o3p2HZAvto9J5G5gtPxhN45zgvaYFAXCY9RCK/lQw=
 github.com/go-freedesktop/gvfs v0.1.1 h1:mzp3qJq9qucK3eFeJMLuImpbXlS/cgxP41wnHBEIcpc=
 github.com/go-freedesktop/gvfs v0.1.1/go.mod h1:/2thANqVEah4mNw2WYi9oSTwjI2+GBLpxcXyikC+Ers=
+github.com/go-gnulinux/fido v0.5.1 h1:mQVU4+LEP6+VMsZigYB2PU7gjAk3DCfpAERBlx8F11M=
+github.com/go-gnulinux/fido v0.5.1/go.mod h1:2nT6jlb8LMIeG9EvHeOFlPHUxRZ0VC0BuzhngTSEd7s=
 github.com/go-macos/fido v0.5.2 h1:isRgU81f8G/duQ79yaKYe1rP5+dmf48oE0NBLaep70o=
 github.com/go-macos/fido v0.5.2/go.mod h1:v4YtWlKHqP6rBPaC48fS3CrMhrsD4XgWUAwHAI4qmr4=
 github.com/go-macos/iokit v0.14.0 h1:TVwBDbHSvCoJ+LgLQODLcTAJmwebDmf0bZ9LDsOvXZ0=
@@ -44,6 +46,8 @@ github.com/go-macos/netfs v0.1.0 h1:2ZxuEmgVPIjEqwIOdkv/j23w03QzpGToxUizmLy9mz8=
 github.com/go-macos/netfs v0.1.0/go.mod h1:xk8N/niL/KKIEPV0XSVe1on92Drr1wBAXwtkOt+alCQ=
 github.com/go-macos/objc v0.12.0 h1:/WmB4C1CQd5RkqBRvnHNljEFtOTvytPA9fkD87xuJVQ=
 github.com/go-macos/objc v0.12.0/go.mod h1:ao+SmTFBrkZdP+488hFTrSFvCtJ36McKKhNNOlcFXrQ=
+github.com/go-mswin/webauthn v0.5.0 h1:3Xiqe7ksxsUgcr+q65LF5SmuMyEW1/In99PeqNGD2Ig=
+github.com/go-mswin/webauthn v0.5.0/go.mod h1:LEZGuO/qLKre7TsDBmgcILgZAsEffhZpjV7TQqzoJpc=
 github.com/go-mswin/win32 v0.7.0 h1:f4zB7/7NhRQ9XTsH20pe0ogcFTgpOvq358WHHn2Mi3Y=
 github.com/go-mswin/win32 v0.7.0/go.mod h1:FyPkYOKEmcfiUr+lQLLGcwyN8e7ZpmmdE5T6VD0mWx0=
 github.com/go-scikit/refbench v0.3.0 h1:ng9b3FRwOWyarkoHHLar1bs43TWi9TydZeO29Yr9iSw=
