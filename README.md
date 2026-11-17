@@ -45,6 +45,25 @@ theca export vault.theca --password-file pw > disk.img
   rollback. In this version it never is: there is no hardware counter on the
   command line yet, so an older copy of a container would be accepted.
 
+### Keyslots
+
+```sh
+theca slots list   vault.theca --password-file pw --recovery-file rc
+theca slots remove vault.theca --password-file pw --recovery-file rc --remove recovery --keep password
+```
+
+- A keyslot holds nothing that says what opens it, so `list` shows the recorded
+  slots and which ones the factors **you present** open.
+- `remove` takes the slot(s) a factor set opens (`password`, `recovery` or
+  `password+recovery`) and a DIFFERENT set to `--keep`, which must still open the
+  container: this is checked before anything is written, and a removal that
+  would leave no way in is refused. Both sets are presented with
+  `--password-file` / `--recovery-file` (or the terminal).
+- It stops access to **this copy** only: anyone holding an older copy can still
+  open it with the removed factor (DESIGN §2, R7).
+- Library: `Container.RemoveFactors(remove, keep []Factor)`, `SlotsOf`, `Slots`,
+  `ErrLastWay`.
+
 ### Serving the files inside: SMB on loopback
 
 ```sh
@@ -138,7 +157,8 @@ Design and trade-offs: [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md) §9
 "H2 revised", and [docs/DESIGN.md](docs/DESIGN.md) §19 I21.
 
 Not in this version: FIDO2 on Linux and Windows, the TPM counter,
-slot management on the command line (go-theca/theca#5).
+slot management for FIDO2 factor sets on the command line (`slots` handles the
+password and the recovery code).
 
 ## Library
 

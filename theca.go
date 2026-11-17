@@ -573,6 +573,11 @@ func (c *Container) RemoveSlot(i int) error {
 	if i < 0 || i >= format.NumSlots {
 		return fmt.Errorf("%w: slot %d out of range", ErrOption, i)
 	}
+	return c.removeSlotLocked(i)
+}
+
+// removeSlotLocked is RemoveSlot for an index already checked.
+func (c *Container) removeSlotLocked(i int) error {
 	junk, err := format.RandomSlot(c.rng)
 	if err != nil {
 		return err

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `Container.RemoveFactors(remove, keep)`, `SlotsOf`, `Slots`, `ErrLastWay`
+  (#5): remove a slot by the factors that open it, and refuse, before any
+  write, a removal that leaves the `keep` set with no other slot.
+- `theca slots list|remove`.
+
 ## v0.5.0
 
 - `serve --network` / `share.Options.Network`: serve beyond loopback, with
