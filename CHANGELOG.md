@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.7.0
 
 - Performance (#8, #9, #10). AES-256-CTR runs through `go-encryptions/ctr`
   (round keys expanded once, kernel call per sector, no allocation; `Zeroize`
   wipes the round keys), and Argon2id through `go-encryptions/argon2`, the
   `x/crypto/argon2` code with a NEON BLAMKA kernel on arm64: 1.54 to 0.73 of
   libsodium on an Apple M4 Max. Tables in `docs/perf-table.md`.
+  AES-256-CTR is 1.03x and the sector tag 1.04x OpenSSL there (#8 and #9 stay
+  open); Zen 4 was not re-measured.
+- `TestKeyCommitment` no longer fails 1 run in 256 (it sealed a one-byte
+  plaintext).
 
 ## v0.6.1
 
