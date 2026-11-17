@@ -23,6 +23,7 @@ import (
 	"github.com/go-theca/theca/internal/format"
 	"github.com/go-theca/theca/internal/journal"
 	"github.com/go-theca/theca/internal/kdf"
+	"github.com/go-theca/theca/internal/lru"
 	"github.com/go-theca/theca/internal/merkle"
 	"github.com/go-theca/theca/internal/ta1"
 )
@@ -215,6 +216,7 @@ type CreateOptions struct {
 	Policy         Policy
 	Counter        Counter   // optional hardware counter
 	Rand           io.Reader // nil: crypto/rand
+	CacheBytes     int       // see OpenOptions.CacheBytes
 }
 
 // OpenOptions configures Open.
@@ -222,6 +224,35 @@ type OpenOptions struct {
 	Counter        Counter
 	AcceptRollback bool
 	Rand           io.Reader
+	// CacheBytes bounds the memory the container keeps for verified, clean
+	// metadata blocks and tree nodes (half each, 4 KiB per entry): 0 is
+	// DefaultCacheBytes. Entries that are part of a transaction not yet
+	// committed are not counted: the journal budget bounds those. An evicted
+	// entry is wiped, and read and authenticated again when it is needed.
+	CacheBytes int
+}
+
+// DefaultCacheBytes is the cache budget when none is given: 64 MiB, which
+// holds 8192 metadata blocks (each covering 64 sectors: 2 GiB of volume) and
+// 8192 tree nodes.
+const DefaultCacheBytes = 64 << 20
+
+// minCacheEntries keeps a tiny budget workable: a write needs a few blocks at
+// once.
+const minCacheEntries = 8
+
+// newCaches builds the metadata block cache and the Merkle tree, both bounded
+// by cacheBytes.
+func (c *Container) newCaches(root [32]byte) {
+	n := c.cacheBytes
+	if n <= 0 {
+		n = DefaultCacheBytes
+	}
+	entries := max(n/2/4096, minCacheEntries)
+	c.meta = lru.New(entries, func(m uint64) bool { _, d := c.dMeta[m]; return d },
+		func(b *[4096]byte) { clear(b[:]) })
+	c.tree = merkle.New(c.k, c.geo.Shape, root, nodeStore{c})
+	c.tree.SetCacheLimit(entries)
 }
 
 // Unlock carries the factors the user presents.
@@ -245,19 +276,20 @@ type Info struct {
 
 // Container is an open container. It is safe for concurrent use.
 type Container struct {
-	mu     sync.Mutex
-	f      Backing
-	rng    io.Reader
-	geo    format.Geometry
-	body   format.Body
-	k      *ta1.Keys
-	tree   *merkle.Tree
-	meta   map[uint64]*[4096]byte // verified metadata blocks (clean and dirty)
-	dMeta  map[uint64]struct{}
-	dData  map[uint64][]byte
-	broken error
-	closed bool
-	info   Info
+	mu         sync.Mutex
+	f          Backing
+	rng        io.Reader
+	geo        format.Geometry
+	body       format.Body
+	k          *ta1.Keys
+	tree       *merkle.Tree
+	cacheBytes int
+	meta       *lru.Cache[*[4096]byte] // verified metadata blocks: a bounded LRU of clean ones, dirty ones pinned
+	dMeta      map[uint64]struct{}
+	dData      map[uint64][]byte
+	broken     error
+	closed     bool
+	info       Info
 }
 
 type region struct {
@@ -369,10 +401,11 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 	}
 
 	c = &Container{f: f, rng: rng, geo: geo, k: ms,
-		meta: map[uint64]*[4096]byte{}, dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
+		dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
 	c.body = format.Body{CID: cid, Sectors: o.Sectors, JournalEntries: jn,
 		Root: merkle.EmptyRoot(ms, geo.Shape)}
-	c.tree = merkle.New(ms, geo.Shape, c.body.Root, nodeStore{c})
+	c.cacheBytes = o.CacheBytes
+	c.newCaches(c.body.Root)
 
 	var specs [][]Factor
 	switch o.Policy {
@@ -695,7 +728,7 @@ func (c *Container) freshMeta(m uint64) (*[4096]byte, error) {
 // loadMeta returns the verified metadata block m, or nil if it was never
 // written.
 func (c *Container) loadMeta(m uint64) (*[4096]byte, error) {
-	if b, ok := c.meta[m]; ok {
+	if b, ok := c.meta.Get(m); ok {
 		return b, nil
 	}
 	v, err := c.tree.Meta(m)
@@ -712,7 +745,7 @@ func (c *Container) loadMeta(m uint64) (*[4096]byte, error) {
 	if got := merkle.N1(c.k, b[:]); !hmac.Equal(got[:], v[:]) {
 		return nil, fmt.Errorf("%w: metadata block %d", ErrCorrupt, m)
 	}
-	c.meta[m] = b
+	c.meta.Put(m, b)
 	return b, nil
 }
 
@@ -786,8 +819,8 @@ func (c *Container) writeSector(s uint64, plain []byte) error {
 	if err := c.tree.SetMeta(m, merkle.N1(c.k, blk[:])); err != nil {
 		return c.treeErr(err)
 	}
-	c.meta[m] = blk
-	c.dMeta[m] = struct{}{}
+	c.dMeta[m] = struct{}{} // pinned before it is stored, so it can never be evicted
+	c.meta.Put(m, blk)
 	c.dData[s] = ct
 	return nil
 }
@@ -883,7 +916,8 @@ func (c *Container) commitLocked(why string) error {
 		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaData, Index: s, Data: c.dData[s]})
 	}
 	for _, m := range sortedKeys(c.dMeta) {
-		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaMeta, Index: m, Data: c.meta[m][:]})
+		blk, _ := c.meta.Peek(m) // dirty: pinned, always cached
+		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaMeta, Index: m, Data: blockBytes(blk)})
 	}
 	for _, o := range c.tree.Dirty() {
 		tx.Records = append(tx.Records, journal.Record{Area: journal.AreaNode, Index: o, Data: c.tree.Bytes(o)})
@@ -912,6 +946,14 @@ func (c *Container) commitLocked(why string) error {
 	c.fillInfo()
 	return nil
 }
+
+// blockBytes slices a cached block. It is a function of its own, not inlined,
+// because slicing the generic cache's *[4096]byte result inline makes the Go
+// 1.27.3 compiler stop with "internal compiler error: bad ptr to array in
+// slice go.shape.*uint8".
+//
+//go:noinline
+func blockBytes(b *[4096]byte) []byte { return b[:] }
 
 // apply writes a transaction's blocks to their destinations. The indexes of
 // a replayed transaction are range-checked here, though they came from
@@ -970,7 +1012,9 @@ func (c *Container) Close() error {
 	}
 	c.closed = true
 	c.k.Zeroize()
-	clear(c.meta)
+	// Wipe what was cached: verified metadata blocks and tree nodes.
+	c.meta.Clear()
+	c.tree.Wipe()
 	return err
 }
 

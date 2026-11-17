@@ -11,6 +11,7 @@ import (
 	"crypto/hmac"
 	"errors"
 	"fmt"
+	"github.com/go-theca/theca/internal/lru"
 	"slices"
 
 	"github.com/go-theca/theca/internal/ta1"
@@ -112,14 +113,27 @@ type Tree struct {
 	store NodeStore
 	def   [][32]byte // def[l] = D(l), l >= 1
 	root  [32]byte
-	nodes map[uint64]*[NodeSize]byte
+	// nodes holds the verified nodes: a bounded LRU of clean ones. A dirty node
+	// is part of the transaction under construction and is never evicted, nor
+	// is a node of the path SetMeta is updating. An evicted node is wiped and,
+	// if needed again, read and verified against its parent again.
+	nodes *lru.Cache[*[NodeSize]byte]
 	dirty map[uint64]struct{}
+	pins  map[uint64]struct{}
 }
+
+// DefaultCacheNodes bounds the clean nodes a tree keeps (4 KiB each: 32 MiB).
+const DefaultCacheNodes = 8192
 
 // New builds a tree whose authenticated root is root.
 func New(k *ta1.Keys, shape Shape, root [32]byte, store NodeStore) *Tree {
 	t := &Tree{k: k, shape: shape, store: store, root: root,
-		nodes: map[uint64]*[NodeSize]byte{}, dirty: map[uint64]struct{}{}}
+		dirty: map[uint64]struct{}{}, pins: map[uint64]struct{}{}}
+	t.nodes = lru.New(DefaultCacheNodes, func(ord uint64) bool {
+		_, d := t.dirty[ord]
+		_, p := t.pins[ord]
+		return d || p
+	}, func(n *[NodeSize]byte) { clear(n[:]) })
 	t.def = make([][32]byte, shape.Levels()+2)
 	t.def[1] = k.MAC(ta1.LabelEmpty)
 	for l := 2; l < len(t.def); l++ {
@@ -150,7 +164,7 @@ func (t *Tree) node(level int, idx uint64) (*[NodeSize]byte, error) {
 	// Callers only pass levels and indexes derived from a checked metadata
 	// index, so the ordinal is in range by construction.
 	ord := t.shape.base[level-2] + idx
-	if n, ok := t.nodes[ord]; ok {
+	if n, ok := t.nodes.Get(ord); ok {
 		return n, nil
 	}
 	var want [32]byte
@@ -181,7 +195,7 @@ func (t *Tree) node(level int, idx uint64) (*[NodeSize]byte, error) {
 		}
 		copy(n[:], raw)
 	}
-	t.nodes[ord] = n
+	t.nodes.Put(ord, n)
 	return n, nil
 }
 
@@ -209,11 +223,16 @@ func (t *Tree) SetMeta(m uint64, v [32]byte) error {
 	}
 	path := make([]*[NodeSize]byte, 0, t.top())
 	idxs := make([]uint64, 0, t.top())
+	// The path is held while it is loaded and rewritten: pin it, so loading
+	// one node can never evict (and wipe) another.
+	defer clear(t.pins)
 	for l, i := 2, m/Fanout; l <= t.top(); l, i = l+1, i/Fanout {
 		n, err := t.node(l, i)
 		if err != nil {
 			return err
 		}
+		ord, _ := t.shape.Ordinal(l, i)
+		t.pins[ord] = struct{}{}
 		path = append(path, n)
 		idxs = append(idxs, i)
 	}
@@ -243,15 +262,25 @@ func (t *Tree) Dirty() []uint64 {
 func (t *Tree) DirtyCount() int { return len(t.dirty) }
 
 // Bytes returns the current content of a loaded node, or nil if it is not
-// loaded. The node cache has no bound: a full 2^40-sector container would
-// cache up to 2^27 level-2 nodes (DESIGN section 19, I10).
+// cached. A dirty node is always cached.
 func (t *Tree) Bytes(ord uint64) []byte {
-	n, ok := t.nodes[ord]
+	n, ok := t.nodes.Peek(ord)
 	if !ok {
 		return nil
 	}
 	return n[:]
 }
+
+// SetCacheLimit bounds the clean nodes kept to n, but never below the nodes of
+// one path (the tree's height plus a few), so a path can always be held.
+func (t *Tree) SetCacheLimit(n int) { t.nodes.SetMax(max(n, t.top()+4)) }
+
+// CacheLen is the number of nodes held, and CachePeak the most it has held.
+func (t *Tree) CacheLen() int  { return t.nodes.Len() }
+func (t *Tree) CachePeak() int { return t.nodes.Peak() }
+
+// Wipe clears and forgets every cached node (the container is closing).
+func (t *Tree) Wipe() { t.nodes.Clear() }
 
 // ClearDirty forgets the dirty set after the nodes were committed.
 func (t *Tree) ClearDirty() { clear(t.dirty) }

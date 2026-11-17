@@ -1533,7 +1533,7 @@ func TestSetMetaOverTamperedTree(t *testing.T) {
 	img.b[geo.TreeOff+9] ^= 1
 	r := reopen(t, img, pwUnlock())
 	blk, _ := r.freshMeta(0)
-	r.meta[0] = blk
+	r.meta.Put(0, blk)
 	if _, err := r.WriteAt([]byte{1}, 0); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("%v", err)
 	}

@@ -172,8 +172,9 @@ func Open(ctx context.Context, f Backing, u Unlock, o OpenOptions) (*Container, 
 	}
 
 	c := &Container{f: f, rng: randOr(o.Rand), geo: geo, body: *body, k: ms,
-		meta: map[uint64]*[4096]byte{}, dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
-	c.tree = merkle.New(ms, geo.Shape, body.Root, nodeStore{c})
+		dMeta: map[uint64]struct{}{}, dData: map[uint64][]byte{}}
+	c.cacheBytes = o.CacheBytes
+	c.newCaches(body.Root)
 	// The counter decides BEFORE anything is written: a rolled-back image
 	// must be refused untouched, not first moved forward by a journal replay
 	// (review of PR #4, finding 4).
@@ -220,7 +221,8 @@ func (c *Container) recover() error {
 	}
 	c.body.Epoch = tx.Epoch
 	c.body.Root = tx.Root
-	c.tree = merkle.New(c.k, c.geo.Shape, tx.Root, nodeStore{c})
+	c.tree.Wipe()
+	c.newCaches(tx.Root)
 	if err := c.writeHeader(); err != nil {
 		return err
 	}
