@@ -35,6 +35,20 @@ var (
 	}
 )
 
+// removeCounter deletes the counter at o.Handle under the owner password. It
+// reports whether there was one: an index that is absent, or is not a theca
+// counter, is left alone. Replaceable by tests.
+var removeCounter = func(o tpmcounter.Options) (bool, error) {
+	c, err := tpmcounter.Open(o)
+	if errors.Is(err, tpmcounter.ErrNoCounter) || errors.Is(err, tpmcounter.ErrNotCounter) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, c.Destroy()
+}
+
 // tpmFlags are the flags of the rollback counter (DESIGN 5.4).
 type tpmFlags struct {
 	counter        string
@@ -145,8 +159,9 @@ func (s *secrets) openContainer(cmd *cobra.Command, f *os.File, u theca.Unlock) 
 }
 
 // recovery is the sentence that names the way back when the counter is gone.
-const recovery = "if the counter was deleted or the TPM was cleared or replaced, " +
-	"`theca counter rebind FILE --counter tpm` (with the owner password, and the factors that open the container) binds it to a new counter; rollback protection then restarts from that moment"
+const recovery = "if the TPM was reset, cleared or replaced, or the counter deleted, " +
+	"`theca counter rebind FILE --counter tpm` (with the owner password, and the factors that open the container) binds it to a new counter and deletes the old one if it is still there; " +
+	"rollback protection then restarts from that moment. An OLD COPY of this container also shows this message: do not rebind to open an old copy"
 
 // hint turns the library's counter refusals into ones that name the flag or
 // the recovery.
@@ -207,7 +222,21 @@ func rebindCmd() *cobra.Command {
 				return err
 			}
 			var made tpmCounter
+			removed := false
 			oo := theca.OpenOptions{RebindFor: func(h uint32, _ []byte) (theca.Counter, error) {
+				// A healthy old counter must go first: it stays at its value, and a
+				// copy of the container taken just before this command (old handle,
+				// bound equal to that value) would still open with it, silently
+				// undoing the rebind. Deleted, the copy finds no counter (or a
+				// redefined one that starts higher) and is refused.
+				if h != 0 {
+					old := o
+					old.Handle = h
+					var err error
+					if removed, err = removeCounter(old); err != nil {
+						return nil, err
+					}
+				}
 				try := o
 				if try.Handle == 0 {
 					try.Handle = h // the recorded handle, if it is free
@@ -231,10 +260,13 @@ func rebindCmd() *cobra.Command {
 				f.Close()
 				return err
 			}
+			gone := "The old counter was already absent."
+			if removed {
+				gone = "The old counter was still there and has been DELETED, so a copy made before this command is refused."
+			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: the container is now bound to a NEW TPM counter, NV index %#08x. "+
-				"Rollback protection restarts from now: an older copy is not checked against the old counter, "+
-				"and the old counter, if it still exists, is not deleted. Give --counter tpm to every command that opens this container.\n",
-				c.Info().CounterHandle)
+				"Rollback protection restarts from now. %s Give --counter tpm to every command that opens this container.\n",
+				c.Info().CounterHandle, gone)
 			return closeBoth(c, f, nil)
 		},
 	}

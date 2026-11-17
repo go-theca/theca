@@ -203,9 +203,11 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # t
   `theca counter rebind FILE --counter tpm --tpm-owner-auth-file F`. That
   command needs the factors that open the container AND the TPM owner
   password; it defines a counter (at the recorded handle if free, else the
-  first free one), binds the header to it and increments it. **Rollback
-  protection then restarts from that moment**: nothing is checked against the
-  old counter. `--accept-rollback` is another thing: it needs a counter that
+  first free one), binds the header to it and increments it. A healthy old
+  counter is **deleted first** (otherwise a copy made just before the rebind
+  would still open with it). **Rollback protection then restarts from that
+  moment**: nothing is checked against the old counter. An old copy of the
+  container shows the same refusal as a reset TPM: do not rebind to open one. `--accept-rollback` is another thing: it needs a counter that
   exists and is ahead of the container.
 - **Threat model.** The counter protects against someone who can replace the
   container file but not control the TPM it is bound to. The container
