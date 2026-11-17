@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.10.2
+
+- **Fix: a second mount in the same macOS session failed** ("authentication
+  error (errno 80)") because every share used the account name `theca`, and
+  macOS replays a stale credential for a fixed account name on 127.0.0.1. The
+  server received an NTLMv2 proof that matched no password it had served. Each
+  share now draws its own account name, `theca-` and 8 random base32
+  characters (`share.UserPrefix`, `Share.User()`); `theca serve` writes it in
+  `--credentials-out`. Before the fix a fixed name failed 12 of 12 repeats;
+  with a random name 0 of 120 (smb author's harness). A live regression test
+  (`THECA_SHARE_LIVE=1`) mounts a network share ten times in one process.
+- Breaking (below v1): the `share.User` constant is gone; use `Share.User()`.
+
 ## v0.10.1
 
 - `counter rebind` deletes the old counter when it is still there (with the
