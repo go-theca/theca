@@ -7,8 +7,6 @@
 package ta1
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -18,6 +16,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/go-encryptions/ctr"
 	"golang.org/x/crypto/chacha20"
 )
 
@@ -73,14 +72,14 @@ type Keys struct {
 // it was built from and is rebuilt when they differ: Keys is a value type,
 // and a copy whose key is then changed shares the pointer.
 //
-// The expanded AES schedule and the HMAC pads live inside crypto/aes and
-// crypto/hmac and cannot be wiped; Zeroize drops them for the GC. Before this
-// cache, every sector left one more such copy behind.
+// The AES round keys live in a go-encryptions/ctr Cipher, which Zeroize wipes.
+// The HMAC pads live inside crypto/hmac and cannot be wiped; Zeroize drops them
+// for the GC. Before this cache, every sector left one more such copy behind.
 type cache struct {
 	mu    sync.Mutex
 	ka    [KeySize]byte
 	km    [KeySize]byte
-	block cipher.Block
+	block *ctr.Cipher
 	mac   hash.Hash
 	buf   [64]byte // tag header scratch: label, cid, index, seed
 }
@@ -96,7 +95,10 @@ func (k *Keys) state() *cache {
 	c := k.c
 	c.mu.Lock()
 	if c.block == nil || c.ka != k.Ka {
-		c.block, _ = aes.NewCipher(k.Ka[:]) // fails only on a bad key length
+		if c.block != nil {
+			c.block.Zeroize()
+		}
+		c.block, _ = ctr.New(k.Ka[:]) // fails only on a bad key length
 		c.ka = k.Ka
 	}
 	if c.mac == nil || c.km != k.Km {
@@ -151,6 +153,9 @@ func (k *Keys) Zeroize() {
 		clear(c.ka[:])
 		clear(c.km[:])
 		clear(c.buf[:])
+		if c.block != nil {
+			c.block.Zeroize() // the AES round keys are ours to wipe
+		}
 		c.block, c.mac = nil, nil
 		c.mu.Unlock()
 		k.c = nil
@@ -173,7 +178,7 @@ func (k *Keys) cascade(dst, src []byte, seed *[SeedSize]byte) {
 	xchacha20(&k.Kc, (*[24]byte)(seed[:24]), dst[:len(src)], src)
 	// The AES key schedule is built once per key, not per object (#8).
 	c := k.state()
-	cipher.NewCTR(c.block, seed[24:]).XORKeyStream(dst[:len(src)], dst[:len(src)])
+	c.block.XORKeyStream(dst[:len(src)], dst[:len(src)], (*[ctr.BlockSize]byte)(seed[24:]))
 	c.mu.Unlock()
 }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Performance (#8, #9, #10). AES-256-CTR runs through `go-encryptions/ctr`
+  (round keys expanded once, kernel call per sector, no allocation; `Zeroize`
+  wipes the round keys), and Argon2id through `go-encryptions/argon2`, the
+  `x/crypto/argon2` code with a NEON BLAMKA kernel on arm64: 1.54 to 0.73 of
+  libsodium on an Apple M4 Max. Tables in `docs/perf-table.md`.
+
 ## v0.6.1
 
 - go-filesystems/smb v0.16.1: per-source connection caps (32 per source, 16

@@ -1,3 +1,7 @@
+github.com/go-encryptions/argon2 v0.1.0 h1:yBY2J+iy8ySMwnAFe4phqx9horyqzbWu2VuPOtpLDwk=
+github.com/go-encryptions/argon2 v0.1.0/go.mod h1:Ow9whh1fllz67dc33JWcDIklhBhAObqll0gBMFTSKeg=
+github.com/go-encryptions/ctr v0.1.1 h1:UAvH45xiG9ifBTt4mE5PNrHWnTY5kBVZ4OyThBPr/94=
+github.com/go-encryptions/ctr v0.1.1/go.mod h1:b8rtXIzdVWDrBNPYVTeLl6JHeXAg1U4kLqRfIjGamdY=
 github.com/go-fleettools/fleettools v0.81.0 h1:UnMflmNw5b82Z+7Ums7UVaW5RrGuACCVmSwytwT1hxw=
 github.com/go-fleettools/fleettools v0.81.0/go.mod h1:y/o3p2HZAvto9J5G5gtPxhN45zgvaYFAXCY9RCK/lQw=
 github.com/go-scikit/refbench v0.3.0 h1:ng9b3FRwOWyarkoHHLar1bs43TWi9TydZeO29Yr9iSw=

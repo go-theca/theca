@@ -14,6 +14,10 @@ github.com/geoffgarside/ber v1.1.0 h1:qTmFG4jJbwiSzSXoNJeHcOprVzZ8Ulde2Rrrifu5U9
 github.com/geoffgarside/ber v1.1.0/go.mod h1:jVPKeCbj6MvQZhwLYsGwaGI52oUorHoHKNecGT85ZCc=
 github.com/go-authn/fido v0.9.0 h1:o9NvY1vpINX0rgpR/ZVBN5KlFkcts1BZ/7nq35h+BSc=
 github.com/go-authn/fido v0.9.0/go.mod h1:EnseUqvvwzHnj7W6occN/5ySFfofWdJHJqcE2UHDDaA=
+github.com/go-encryptions/argon2 v0.1.0 h1:yBY2J+iy8ySMwnAFe4phqx9horyqzbWu2VuPOtpLDwk=
+github.com/go-encryptions/argon2 v0.1.0/go.mod h1:Ow9whh1fllz67dc33JWcDIklhBhAObqll0gBMFTSKeg=
+github.com/go-encryptions/ctr v0.1.1 h1:UAvH45xiG9ifBTt4mE5PNrHWnTY5kBVZ4OyThBPr/94=
+github.com/go-encryptions/ctr v0.1.1/go.mod h1:b8rtXIzdVWDrBNPYVTeLl6JHeXAg1U4kLqRfIjGamdY=
 github.com/go-fileshare/automount v0.1.1 h1:Sm2ELnwLkHBCJb1BvycEU1RuRAm2EjmdCNc+LlkOArw=
 github.com/go-fileshare/automount v0.1.1/go.mod h1:5Shh64ihIDXkx0vxRRqFTIKp9DRw47wYd97amJzZHBI=
 github.com/go-filesystems/exfat v0.7.0 h1:i7qbWLrSMTM6Tc7r20bim7Q853cqftFWLU7FnH1iuv4=
