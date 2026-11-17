@@ -214,7 +214,7 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # t
   virtual TPM, a software TPM whose state sits on the same storage as the
   container, a replaced TPM) can define an index with the same Name and bring
   it to a value at or above an old bound. Pinning a TPM's identity is not
-  done (go-theca/theca issue "TPM identity pinning"). The counter index
+  done (go-theca/theca#39). The counter index
   has `NO_DA`: a wrong authValue file does not count towards the TPM's
   lockout.
 - Library: `tpmcounter.Create`, `tpmcounter.Open`, `OpenOptions.CounterFor`,
