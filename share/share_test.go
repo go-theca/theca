@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestStartStop(t *testing.T) {
 	if !strings.HasPrefix(s.URL(), "smb://127.0.0.1:") || !strings.HasSuffix(s.URL(), "/theca") {
 		t.Fatalf("URL %q", s.URL())
 	}
-	if s.User() != User || len(s.Password()) < 30 || s.MountPath() != "" {
+	if !userRE.MatchString(s.User()) || len(s.Password()) < 30 || s.MountPath() != "" {
 		t.Fatalf("user %q, password %d chars, mount %q", s.User(), len(s.Password()), s.MountPath())
 	}
 	if s.Err() != nil {
@@ -367,7 +368,7 @@ func TestMount(t *testing.T) {
 	if err := s.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(fm.url, "smb://127.0.0.1:") || !strings.HasSuffix(fm.url, "/theca") || fm.user != User || fm.pwLen < 30 {
+	if !strings.HasPrefix(fm.url, "smb://127.0.0.1:") || !strings.HasSuffix(fm.url, "/theca") || fm.user != s.User() || !userRE.MatchString(fm.user) || fm.pwLen < 30 {
 		t.Fatalf("mounted %q as %q (password %d chars)", fm.url, fm.user, fm.pwLen)
 	}
 	if !fm.unmounted {
@@ -408,5 +409,72 @@ func TestMountShareDefault(t *testing.T) {
 	}
 	if m, err := asMounted(&automount.Mounted{}, nil); err != nil || m == nil {
 		t.Fatalf("asMounted: %v %v", m, err)
+	}
+}
+
+// userRE is what an account name looks like: the prefix and 8 base32 characters.
+var userRE = regexp.MustCompile(`^theca-[a-z2-7]{8}$`)
+
+// Every share has its own account name: macOS replays a stale credential for a
+// fixed name on 127.0.0.1 and fails the second mount with errno 80.
+func TestEveryShareHasItsOwnAccountName(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		u := newUser()
+		if !userRE.MatchString(u) || seen[u] {
+			t.Fatalf("name %q (a repeat: %v)", u, seen[u])
+		}
+		seen[u] = true
+	}
+	// And a running share serves exactly its own name, not the prefix alone.
+	c := newContainer(t, true)
+	s1, err := Start(context.Background(), c, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u1 := s1.User()
+	s1.Stop()
+	s2, err := Start(context.Background(), c, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Stop()
+	if u1 == s2.User() {
+		t.Fatalf("two shares both named %q", u1)
+	}
+	if _, err := dial(t, s2, 0x0311, false); err != nil {
+		t.Fatalf("its own name does not log in: %v", err)
+	}
+	other := &Share{user: u1, password: s2.Password(), url: s2.URL()}
+	if _, err := dial(t, other, 0x0311, false); err == nil {
+		t.Fatal("another share's account name logged in")
+	}
+}
+
+// TestLiveRepeatedNetworkMounts mounts a REAL network share ten times in one
+// process: start, mount, unmount, stop. A fixed account name made the second
+// one fail on macOS. It mounts volumes on this machine, so it runs only when
+// asked:
+//
+//	THECA_SHARE_LIVE=1 go test -count=1 -run TestLiveRepeatedNetworkMounts -v ./share
+func TestLiveRepeatedNetworkMounts(t *testing.T) {
+	if os.Getenv("THECA_SHARE_LIVE") == "" {
+		t.Skip("set THECA_SHARE_LIVE=1 to mount real shares")
+	}
+	c := newContainer(t, true)
+	o := opts()
+	o.Addr, o.Network, o.Mount = "0.0.0.0:0", true, true
+	for i := 0; i < 10; i++ {
+		s, err := Start(context.Background(), c, o)
+		if err != nil {
+			t.Fatalf("round %d: %v", i, err)
+		}
+		t.Logf("round %d: %s mounted at %s", i, s.User(), s.MountPath())
+		if s.MountPath() == "" {
+			t.Fatalf("round %d: not mounted", i)
+		}
+		if err := s.Stop(); err != nil {
+			t.Fatalf("round %d: stop: %v", i, err)
+		}
 	}
 }

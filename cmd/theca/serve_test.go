@@ -131,7 +131,7 @@ func TestServeLifecycle(t *testing.T) {
 	if st, _ := os.Stat(creds); st.Mode().Perm() != 0o600 {
 		t.Fatalf("credentials mode %04o", st.Mode().Perm())
 	}
-	if cr.User != share.User || len(cr.Password) < 30 || !strings.HasPrefix(cr.URL, "smb://127.0.0.1:") || !strings.HasSuffix(cr.URL, "/theca") {
+	if !strings.HasPrefix(cr.User, share.UserPrefix) || len(cr.User) != len(share.UserPrefix)+8 || len(cr.Password) < 30 || !strings.HasPrefix(cr.URL, "smb://127.0.0.1:") || !strings.HasSuffix(cr.URL, "/theca") {
 		t.Fatalf("credentials %+v", cr)
 	}
 	// The port answers.

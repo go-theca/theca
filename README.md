@@ -81,8 +81,10 @@ theca serve vault.theca --credentials-out creds.json   # or: hand the account to
   signed) using go-filesystems/smb.
   - It listens on a **loopback address only** by default: the data is
     decrypted. See "Beyond loopback" below.
-  - One random account is drawn per run, never printed or passed as an
-    argument.
+  - One random account is drawn per run (a random user name, `theca-` and 8
+    characters, as well as a random password), never printed or passed as an
+    argument. The name is random on purpose: macOS replays a stale credential
+    for a fixed name on 127.0.0.1 and fails the next mount.
   - `--mount` mounts the share in the file manager with **no password
     dialog** (go-fileshare/automount): the password goes to the OS mount
     service as a value. At stop it unmounts first, so the client flushes

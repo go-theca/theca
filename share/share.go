@@ -12,12 +12,14 @@ package share
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base32"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,8 +30,21 @@ import (
 	"github.com/go-theca/theca"
 )
 
-// User is the one account a served container has.
-const User = "theca"
+// UserPrefix starts the name of the one account a served container has. The
+// rest is drawn at random for every share (Share.User): macOS replays a stale
+// credential for a FIXED account name on 127.0.0.1, so a second mount in the
+// same session failed with an authentication error (errno 80) whenever the
+// name was the same as an earlier share's.
+const UserPrefix = "theca-"
+
+// newUser draws an account name: UserPrefix and 8 base32 characters (lower
+// case, [a-z2-7]): valid for SMB and NTLM, and in the `.\name` form Windows
+// takes.
+func newUser() string {
+	var b [5]byte
+	rand.Read(b[:])
+	return UserPrefix + strings.ToLower(base32.StdEncoding.EncodeToString(b[:]))
+}
 
 // unmountTimeout bounds the unmount at Stop: a client that never answers must
 // not hold the container open forever.
@@ -125,6 +140,7 @@ func asMounted(m *automount.Mounted, err error) (mounted, error) {
 type Share struct {
 	url      string
 	addr     string
+	user     string
 	password string
 	mnt      mounted
 	srv      *smb.Server
@@ -166,8 +182,9 @@ func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
 	u := &url.URL{Scheme: "smb", Host: localHost(ln.Addr()), Path: "/" + o.Name}
 	srv := smb.New()
 	srv.SetName("THECA")
-	srv.AddUser(User, password)
-	shareOpts := []smb.ShareOption{smb.AllowUsers(User)}
+	user := newUser()
+	srv.AddUser(user, password)
+	shareOpts := []smb.ShareOption{smb.AllowUsers(user)}
 	if o.Network {
 		// Beyond loopback, both or nothing: a session that does not sign and
 		// encrypt is refused, and so is a share reached without encryption.
@@ -179,7 +196,7 @@ func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
 		return nil, errors.Join(err, ln.Close(), fsys.Close())
 	}
 	s := &Share{
-		url: u.String(), addr: ln.Addr().String(), password: password, srv: srv, fsys: fsys,
+		url: u.String(), addr: ln.Addr().String(), user: user, password: password, srv: srv, fsys: fsys,
 		stopCh: make(chan struct{}), done: make(chan struct{}),
 	}
 	served := make(chan error, 1)
@@ -189,7 +206,7 @@ func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
 	serve := serveSMB
 	go func() { served <- serve(srv, ln) }()
 	if o.Mount {
-		m, err := mountShare(ctx, u, User, password)
+		m, err := mountShare(ctx, u, user, password)
 		if err != nil {
 			srv.Close()
 			return nil, errors.Join(fmt.Errorf("mounting %s: %w", s.url, err), fsys.Close())
@@ -234,8 +251,9 @@ func (s *Share) URL() string { return s.url }
 // 0.0.0.0:4455.
 func (s *Share) Addr() string { return s.addr }
 
-// User is the account name of the share.
-func (s *Share) User() string { return User }
+// User is the account name of this share: UserPrefix and 8 random characters,
+// different for every Start.
+func (s *Share) User() string { return s.user }
 
 // Password is the share's password. It is a secret: it exists for a caller
 // that hands the account to another client (theca serve --credentials-out).
