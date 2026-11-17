@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.1
+
+- go-filesystems/smb v0.16.1: per-source connection caps (32 per source, 16
+  pre-auth; loopback is not exempt, and is far above one Finder client) and a
+  zone-id fix.
+
 ## v0.6.0
 
 - README: the `--network` live measurement (macOS 27.2.1).
