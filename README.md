@@ -104,6 +104,15 @@ another machine uses this machine's address with that port. The server bounds
 its connections and what an unauthenticated one may hold (smb v0.15.0 defaults).
 The GUI has no network option: it always serves loopback.
 
+Measured on macOS 27.2.1 (2026-11-16, theca v0.5.0, smb v0.15.0):
+`serve --network --addr 0.0.0.0:4455 --mount --credentials-out f` mounted in
+`/Volumes/theca`, and `smbutil statshares -a` reported SMB 3.1.1 with
+`SMB_CURR_ENCRYPT_ALGORITHM AES-128-GCM`, `SMB_CURR_SIGN_ALGORITHM
+AES_128_GMAC`, `ENCRYPTION_REQUIRED TRUE` and `SIGNING_REQUIRED TRUE`. A file
+written and read back through the mount worked; SIGINT (by PID) left no volume
+and no credentials file, and `verify` passed (16384 sectors). Not measured: a
+client on another machine.
+
 ### FIDO2 security keys
 
 ```sh
