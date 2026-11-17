@@ -175,7 +175,8 @@ Design and trade-offs: [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md) §9
 theca create vault.theca --size 1G --counter tpm                 # defines an NV counter, binds the container to it
 theca info   vault.theca --counter tpm                           # rollback protected: true (TPM NV counter 0x01500000 ...)
 theca create v2.theca --size 1G --counter tpm --tpm-auth-file ix --tpm-owner-auth-file owner
-theca info   vault.theca --counter tpm --accept-rollback          # rebind an older copy on purpose (loud)
+theca info   vault.theca --counter tpm --accept-rollback          # accept an older copy on purpose (loud); needs the counter
+theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # the counter is gone: bind to a new one
 ```
 
 - The counter advances once per mount, not per commit. An older copy of the
@@ -195,15 +196,31 @@ theca info   vault.theca --counter tpm --accept-rollback          # rebind an ol
   counter's own authValue (at most 32 bytes), needed to increment and read it.
   Both are files that only their owner can read, never arguments or
   environment variables.
-- Stated limit: the owner of the TPM can delete the counter (an index with
-  `POLICY_DELETE` can only be created with platform authorization), and
-  `TPM2_Clear` removes it. That is a denial of service, not a way back: a
-  redefined counter starts above every earlier count, so the container is
-  refused until `--accept-rollback` (DESIGN §19 I22). One counter per
-  container.
-- Library: `tpmcounter.Create`, `tpmcounter.Open`, `OpenOptions.CounterFor`.
-  Built on go-tpm2/tpm2 v0.9.0 `NVDefineCounter`, `NVIncrementAuth`,
-  `NVReadCounter`.
+- **When the counter is gone** (the owner undefined the index, or
+  `TPM2_Clear`, a BIOS reset or a reinstall removed it; an index with
+  `POLICY_DELETE` would need platform authorization, so the owner can delete
+  this one) the container cannot be opened, and the message says so and names
+  `theca counter rebind FILE --counter tpm --tpm-owner-auth-file F`. That
+  command needs the factors that open the container AND the TPM owner
+  password; it defines a counter (at the recorded handle if free, else the
+  first free one), binds the header to it and increments it. **Rollback
+  protection then restarts from that moment**: nothing is checked against the
+  old counter. `--accept-rollback` is another thing: it needs a counter that
+  exists and is ahead of the container.
+- **Threat model.** The counter protects against someone who can replace the
+  container file but not control the TPM it is bound to. The container
+  records a counter's handle and its NV Name, which covers type and
+  attributes, not the TPM: whoever controls the TPM used (the host of a
+  virtual TPM, a software TPM whose state sits on the same storage as the
+  container, a replaced TPM) can define an index with the same Name and bring
+  it to a value at or above an old bound. Pinning a TPM's identity is not
+  done (go-theca/theca issue "TPM identity pinning"). The counter index
+  has `NO_DA`: a wrong authValue file does not count towards the TPM's
+  lockout.
+- Library: `tpmcounter.Create`, `tpmcounter.Open`, `OpenOptions.CounterFor`,
+  `OpenOptions.RebindFor`. Built on go-tpm2/tpm2 v0.10.0 `NVDefineCounter`,
+  `NVIncrementAuth`, `NVReadCounter`. Counters defined by v0.9.0 (without
+  `NO_DA`) are still recognized. One counter per container.
 
 Not in this version: the TPM counter on Windows, slot management for FIDO2
 factor sets on the command line (`slots` handles the

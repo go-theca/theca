@@ -182,14 +182,19 @@ func TestOpenErrors(t *testing.T) {
 	if _, err := Open(Options{Handle: 1, Auth: make([]byte, 40)}); !errors.Is(err, ErrAuthTooLong) {
 		t.Fatalf("auth: %v", err)
 	}
-	if _, err := Open(Options{Handle: First}); err == nil {
-		t.Fatal("open of an undefined handle")
+	if _, err := Open(Options{Handle: First}); !errors.Is(err, ErrNoCounter) {
+		t.Fatalf("open of an undefined handle: %v", err)
 	}
+	f.fail["readpublic"] = boom
+	if _, err := Open(Options{Handle: First}); !errors.Is(err, boom) || errors.Is(err, ErrNoCounter) {
+		t.Fatalf("another ReadPublic failure: %v", err)
+	}
+	delete(f.fail, "readpublic")
 	f.pubs[First] = tpm2.NVPublic{Attributes: 0x00060006, DataSize: 32} // an ordinary index
 	if _, err := Open(Options{Handle: First}); !errors.Is(err, ErrNotCounter) {
 		t.Fatalf("ordinary index: %v", err)
 	}
-	f.pubs[First] = tpm2.NVPublic{Attributes: tpm2.CounterAttributes, DataSize: 4}
+	f.pubs[First] = tpm2.NVPublic{Attributes: tpm2.LegacyCounterAttributes, DataSize: 4}
 	if _, err := Open(Options{Handle: First}); !errors.Is(err, ErrNotCounter) {
 		t.Fatalf("wrong size: %v", err)
 	}

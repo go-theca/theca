@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.10.0
+
+From the independent review of v0.9.0.
+
+- `theca counter rebind FILE --counter tpm`: when the counter is gone (the
+  index undefined, `TPM2_Clear`, a reinstall) the container could not be opened
+  at all, and the README said `--accept-rollback` would help; it needs a
+  counter to compare. The refusal now names the recovery. `rebind` needs the
+  unlocking factors and the owner password, defines a counter (at the recorded
+  handle if free), binds the header to it and increments. Rollback protection
+  restarts from that moment. Library: `OpenOptions.RebindFor`,
+  `tpmcounter.ErrNoCounter`. Tested on swtpm for a deleted index and for a
+  replaced TPM.
+- New counters carry `TPMA_NV_NO_DA` (go-tpm2/tpm2 v0.10.0): a wrong authValue
+  file no longer counts towards the TPM's lockout. Counters made by v0.9.0 are
+  still opened.
+- Documented the limit that the header binds a counter's handle and Name, not
+  a TPM (DESIGN §19 I22, README threat model).
+
 ## v0.9.0
 
 - TPM rollback counter. `theca create --counter tpm` defines a TPM 2.0 NV
