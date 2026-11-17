@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0
+
+- FIDO2 on Linux (go-gnulinux/fido v0.5.1, hidraw) and Windows
+  (go-mswin/webauthn v0.5.0, `webauthn.dll`; Windows shows its own PIN dialog,
+  `--pin-file` does not apply). The transport is chosen by `GOOS`. Not measured
+  on a real key on either OS.
+
 ## v0.7.0
 
 - Performance (#8, #9, #10). AES-256-CTR runs through `go-encryptions/ctr`

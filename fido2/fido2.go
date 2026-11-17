@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"runtime"
 
 	authn "github.com/go-authn/fido"
 
@@ -56,7 +57,8 @@ type Device struct {
 	k     key
 	pin   func() (string, error)
 	proto authn.PINProtocol
-	uv    bool // built-in user verification (a fingerprint)
+	uv    bool      // built-in user verification (a fingerprint)
+	win   *platform // Windows: webauthn.dll does CTAP, the PIN and the UI; k is nil
 }
 
 var _ theca.FIDO2 = (*Device)(nil)
@@ -64,10 +66,26 @@ var _ theca.FIDO2 = (*Device)(nil)
 // openKey opens the attached authenticator; tests replace it.
 var openKey = func(ctx context.Context) (key, error) { return openTransport(ctx) }
 
+// goos and winAPI are seams: tests choose the operating system and fake
+// webauthn.dll.
+var (
+	goos               = runtime.GOOS
+	winAPI platformAPI = realPlatform{}
+)
+
 // Open finds the attached key and checks that it can hold a Theca credential:
 // hmac-secret, credProtect, discoverable credentials, and a way to verify
 // the person (its own, or a PIN, which pin returns when asked).
 func Open(ctx context.Context, pin func() (string, error)) (*Device, error) {
+	if goos == "windows" {
+		// Windows will not let an unelevated process open the key (1903+); it
+		// does the PIN and the dialog itself, so pin is not used.
+		w, err := openPlatform(winAPI)
+		if err != nil {
+			return nil, err
+		}
+		return &Device{win: w}, nil
+	}
 	k, err := openKey(ctx)
 	if err != nil {
 		return nil, err
@@ -106,7 +124,12 @@ func newDevice(ctx context.Context, k key, pin func() (string, error)) (*Device,
 }
 
 // Close releases the authenticator.
-func (d *Device) Close() error { return d.k.Close() }
+func (d *Device) Close() error {
+	if d.win != nil {
+		return nil
+	}
+	return d.k.Close()
+}
 
 // token verifies the person for one permission.
 func (d *Device) token(ctx context.Context, perm authn.Permissions) (authn.Token, error) {
@@ -165,6 +188,9 @@ func random(n int) []byte {
 // salts: two touches, one to register and one to assert, because the
 // YubiKey 5.7 does not offer hmac-secret-mc (HARDWARE-KEYS 5.1).
 func (d *Device) Enroll(ctx context.Context, salts [][32]byte) ([][]byte, error) {
+	if d.win != nil {
+		return d.win.enroll(ctx, salts)
+	}
 	h, err := d.hmacInput(salts)
 	if err != nil {
 		return nil, err
@@ -212,6 +238,9 @@ func (d *Device) Enroll(ctx context.Context, salts [][32]byte) ([][]byte, error)
 // verification and one touch. Credentials whose answer carries no output are
 // skipped; none at all is theca.ErrNoCredential.
 func (d *Device) Derive(ctx context.Context, salts [][32]byte) ([][][]byte, error) {
+	if d.win != nil {
+		return d.win.derive(ctx, salts)
+	}
 	h, err := d.hmacInput(salts)
 	if err != nil {
 		return nil, err
