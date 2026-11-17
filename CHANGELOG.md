@@ -6,6 +6,11 @@
   (#5): remove a slot by the factors that open it, and refuse, before any
   write, a removal that leaves the `keep` set with no other slot.
 - `theca slots list|remove`.
+- The metadata block cache and the Merkle node cache of an open container are
+  bounded (#6): `OpenOptions.CacheBytes` / `CreateOptions.CacheBytes`, default
+  64 MiB. Clean entries are evicted least-recently-used and wiped; dirty ones
+  are pinned until commit; an evicted entry is authenticated again when read.
+  `Close` wipes the caches.
 
 ## v0.5.0
 

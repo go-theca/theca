@@ -389,3 +389,62 @@ func TestNodeMovedToAnotherOrdinal(t *testing.T) {
 		t.Fatalf("level confusion: %v", err)
 	}
 }
+
+// A tree with a small node cache gives the same root and the same values as
+// one with none, never holds more than its bound of clean nodes, and reads an
+// evicted node again (and verifies it again).
+func TestBoundedNodeCache(t *testing.T) {
+	k := keys(t)
+	sh, _ := NewShape(64 * 128 * 130) // three upper levels, 130 level-2 nodes at the bottom
+	st := &memStore{nodes: map[uint64][]byte{}}
+	tr := New(k, sh, EmptyRoot(k, sh), st)
+	tr.SetCacheLimit(1) // raised to the height of the tree plus a few
+	limit := sh.Levels() + 1 + 4
+	blocks := map[uint64][]byte{}
+	for i := uint64(0); i < 130; i++ {
+		m := i * 128 // one block under each level-2 node
+		blk := make([]byte, 4096)
+		rand.Read(blk)
+		blocks[m] = blk
+		if err := tr.SetMeta(m, N1(k, blk)); err != nil {
+			t.Fatal(err)
+		}
+		commit(tr, st) // clean from here on: evictable
+	}
+	if tr.Root() != naiveRoot(k.Km[:], sh.MetaBlocks, blocks) {
+		t.Fatal("a bounded cache changed the root")
+	}
+	for i := uint64(0); i < 130; i++ {
+		v, err := tr.Meta(i * 128)
+		if err != nil || v != N1(k, blocks[i*128]) {
+			t.Fatalf("meta %d: %v", i*128, err)
+		}
+	}
+	if tr.CachePeak() > limit+sh.Levels()+1 { // dirty or pinned nodes may sit above the bound for a moment
+		t.Fatalf("peak %d, limit %d", tr.CachePeak(), limit)
+	}
+	if tr.CacheLen() > limit {
+		t.Fatalf("len %d after a read-only sweep, limit %d", tr.CacheLen(), limit)
+	}
+	// Evicted nodes are authenticated again when they come back: tamper with
+	// one that is no longer cached and the read meets it.
+	reads := st.reads
+	if _, err := tr.Meta(0); err != nil {
+		t.Fatal(err)
+	}
+	if st.reads == reads {
+		t.Fatal("an evicted node was not read again")
+	}
+	tr.Wipe()
+	if tr.CacheLen() != 0 {
+		t.Fatalf("len %d after Wipe", tr.CacheLen())
+	}
+	for o := range st.nodes {
+		bad := append([]byte(nil), st.nodes[o]...)
+		bad[100] ^= 1
+		st.nodes[o] = bad
+	}
+	if _, err := tr.Meta(0); !errors.Is(err, ErrTamper) {
+		t.Fatalf("a tampered node after eviction: %v", err)
+	}
+}
