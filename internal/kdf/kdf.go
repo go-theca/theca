@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/go-encryptions/argon2"
 	"github.com/go-theca/theca/internal/ta1"
-	"golang.org/x/crypto/argon2"
 )
 
 // Profile is one Argon2id parameter set (RFC 9106 section 4).

@@ -2,15 +2,14 @@ package bench
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"encoding/binary"
 	"testing"
 	"time"
 
+	"github.com/go-encryptions/argon2"
+	"github.com/go-encryptions/ctr"
 	"github.com/go-scikit/refbench"
 	"github.com/go-scikit/refbench/rbtest"
-	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20"
 
 	"github.com/go-theca/theca/internal/ta1"
@@ -24,7 +23,7 @@ type fixture struct {
 	seed   [ta1.SeedSize]byte
 	plain  []byte
 	prefix []byte // label(leaf) || cid || u64(idx) || seed: the tag input before C
-	block  cipher.Block
+	block  *ctr.Cipher
 }
 
 type zeroReader struct{ seed *[ta1.SeedSize]byte }
@@ -73,9 +72,9 @@ func goXChaCha(f *fixture, buf []byte) {
 
 func goAESCTR(f *fixture, buf []byte) {
 	if f.block == nil {
-		f.block, _ = aes.NewCipher(f.k.Ka[:])
+		f.block, _ = ctr.New(f.k.Ka[:])
 	}
-	cipher.NewCTR(f.block, f.seed[24:]).XORKeyStream(buf, buf)
+	f.block.XORKeyStream(buf, buf, (*[ctr.BlockSize]byte)(f.seed[24:]))
 }
 
 // Argon2id at profile 1's time and memory (t=3, 64 MiB), one lane: libsodium

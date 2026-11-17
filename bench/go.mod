@@ -3,6 +3,8 @@ module github.com/go-theca/theca/bench
 go 1.27.4
 
 require (
+	github.com/go-encryptions/argon2 v0.1.0
+	github.com/go-encryptions/ctr v0.1.0
 	github.com/go-scikit/refbench v0.3.0
 	github.com/go-theca/theca v0.0.0
 	golang.org/x/crypto v0.59.0
