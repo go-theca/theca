@@ -226,7 +226,17 @@ type OpenOptions struct {
 	// has been authenticated and names one (its handle and NV Name are only
 	// known then: the header has no plaintext fields). An error it returns
 	// refuses the open.
-	CounterFor     func(handle uint32, name []byte) (Counter, error)
+	CounterFor func(handle uint32, name []byte) (Counter, error)
+	// RebindFor is the recovery path for a counter that is gone (the index was
+	// undefined, the TPM was cleared) or that the container should move away
+	// from. It is asked, once the header has authenticated, for a NEW counter:
+	// the handle and Name the header records (0 and nil if it records none) are
+	// passed so a counter can be made at the same handle. The mount protocol
+	// does not run against the old counter: this mount increments the new one,
+	// reads its value and binds the header to it. Rollback protection restarts
+	// from that moment: nothing is checked against the old counter. Needs the
+	// unlocking factors, like any open; the decision to use it is the caller's.
+	RebindFor      func(handle uint32, name []byte) (Counter, error)
 	AcceptRollback bool
 	Rand           io.Reader
 	// CacheBytes bounds the memory the container keeps for verified, clean

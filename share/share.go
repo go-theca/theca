@@ -183,7 +183,11 @@ func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
 		stopCh: make(chan struct{}), done: make(chan struct{}),
 	}
 	served := make(chan error, 1)
-	go func() { served <- serveSMB(srv, ln) }()
+	// The function is read here, not in the goroutine: a test replaces
+	// serveSMB and restores it, and a late-starting goroutine would read it
+	// concurrently (a data race on arm64 CI, TestShareEndsOnAFailure).
+	serve := serveSMB
+	go func() { served <- serve(srv, ln) }()
 	if o.Mount {
 		m, err := mountShare(ctx, u, User, password)
 		if err != nil {

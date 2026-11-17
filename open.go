@@ -236,6 +236,7 @@ type counterGate struct {
 	finish bool   // b == c+1: an earlier mount crashed before its increment
 	base   uint64 // the counter value once any unfinished increment is done
 	ctr    Counter
+	rebind bool // bind the header to a new counter (OpenOptions.RebindFor)
 }
 
 // checkCounter runs the read-only half of the mount protocol of DESIGN 5.4:
@@ -243,6 +244,18 @@ type counterGate struct {
 // nothing, to the backing or to the counter.
 func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 	b := c.body.Counter
+	if o.RebindFor != nil {
+		var h uint32
+		var n []byte
+		if b != nil {
+			h, n = b.Handle, b.Name
+		}
+		ctr, err := o.RebindFor(h, n)
+		if err != nil {
+			return counterGate{}, err
+		}
+		return counterGate{bound: true, rebind: true, ctr: ctr}, nil
+	}
 	if b == nil {
 		return counterGate{}, nil // "rollback-unprotected": Info.RollbackProtected is false
 	}
@@ -280,6 +293,24 @@ func (c *Container) bindCounter(g counterGate) error {
 		return nil
 	}
 	ctr := g.ctr
+	if g.rebind {
+		// Like Create: increment a fresh counter, read it, and bind to the
+		// value read. The Name is read after the increment (it can change at the
+		// first one). A crash between the two steps leaves the header on the
+		// old counter, and the rebind can be run again.
+		if err := ctr.Increment(); err != nil {
+			return err
+		}
+		c0, err := ctr.Read()
+		if err != nil {
+			return err
+		}
+		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0}
+		c.mu.Lock()
+		err = c.commitLocked("rebind counter")
+		c.mu.Unlock()
+		return err
+	}
 	if g.finish {
 		if err := ctr.Increment(); err != nil {
 			return err

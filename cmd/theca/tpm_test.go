@@ -48,6 +48,8 @@ type fakeTPM struct {
 	createErr  error
 	openErr    error
 	failIncAt1 bool
+	failHandle uint32 // createCounter refuses this handle (taken)
+	destroyed  []*fakeCounter
 }
 
 func installFakeTPM(t *testing.T) *fakeTPM {
@@ -62,6 +64,9 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 			return nil, f.createErr
 		}
 		h := o.Handle
+		if h != 0 && h == f.failHandle {
+			return nil, errors.New("NV index already defined")
+		}
 		if h == 0 {
 			h = 0x01500000
 		}
@@ -199,6 +204,170 @@ func TestCounterTPMErrors(t *testing.T) {
 	}
 	if r := run(nil, "info", path, "--password-file", pw, "--counter", "sgx"); r.e == nil {
 		t.Fatal("an unknown counter was accepted")
+	}
+}
+
+// The counter is gone: the refusal names the recovery, `counter rebind` does it.
+func TestCounterRebind(t *testing.T) {
+	f := installFakeTPM(t)
+	dir := t.TempDir()
+	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	owner := secretFile(t, dir, "owner", "owner secret\n", 0o600)
+	path := filepath.Join(dir, "c.theca")
+	if r := run(nil, "create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm", "--tpm-handle", "0x01500042"); r.e != nil {
+		t.Fatal(r.e)
+	}
+	old := f.ctr
+	info := func() result {
+		return run(nil, "info", path, "--password-file", pw, "--counter", "tpm")
+	}
+
+	// The index is gone (undefined, or the TPM was cleared).
+	f.openErr = tpmcounter.ErrNoCounter
+	if r := info(); !errors.Is(r.e, tpmcounter.ErrNoCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
+		t.Fatalf("refusal after the counter was deleted: %v", r.e)
+	}
+	// --accept-rollback is not the way back (it needs a counter to compare).
+	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--accept-rollback"); !errors.Is(r.e, tpmcounter.ErrNoCounter) {
+		t.Fatalf("accept-rollback with no counter: %v", r.e)
+	}
+	// A counter that is there but is not the recorded one: the same sentence.
+	f.openErr = nil
+	f.ctr = &fakeCounter{h: 0x01500042, v: 9, written: true}
+	f.ctr.written = false // its Name differs from the recorded one
+	if r := info(); !errors.Is(r.e, theca.ErrCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
+		t.Fatalf("another counter at the handle: %v", r.e)
+	}
+	f.openErr = tpmcounter.ErrNotCounter
+	if r := info(); !strings.Contains(r.e.Error(), "counter rebind") {
+		t.Fatalf("not a counter: %v", r.e)
+	}
+	f.openErr = nil
+	f.ctr = old
+
+	// Rebind: at the recorded handle when it is free.
+	f.created = nil
+	rb := func(extra ...string) result {
+		return run(nil, append([]string{"counter", "rebind", path, "--password-file", pw, "--counter", "tpm", "--tpm-owner-auth-file", owner}, extra...)...)
+	}
+	f.failHandle = 0
+	r := rb()
+	if r.e != nil || !strings.Contains(r.err, "NEW TPM counter, NV index 0x01500042") || !strings.Contains(r.err, "restarts from now") {
+		t.Fatalf("rebind: %v %q", r.e, r.err)
+	}
+	if f.created[0].Handle != 0x01500042 || string(f.created[0].OwnerAuth) != "owner secret" || f.ctr == old || f.ctr.v != 41 {
+		t.Fatalf("created %+v, counter %+v", f.created, f.ctr)
+	}
+	if r := info(); r.e != nil || !strings.Contains(r.out, "rollback protected: true") {
+		t.Fatalf("after the rebind: %v %q", r.e, r.out)
+	}
+
+	// The recorded handle is taken: the first free one.
+	f.failHandle = 0x01500042
+	f.created = nil
+	r = rb()
+	if r.e != nil || len(f.created) != 2 || f.created[1].Handle != 0 || !strings.Contains(r.err, "NV index 0x01500000") {
+		t.Fatalf("fallback: %v %q created %+v", r.e, r.err, f.created)
+	}
+	f.failHandle = 0
+	// An explicit handle that is taken is an error, not a fallback.
+	f.failHandle = 0x01500099
+	f.created = nil
+	if r := rb("--tpm-handle", "0x01500099"); r.e == nil || len(f.created) != 1 {
+		t.Fatalf("explicit handle: %v, %d attempts", r.e, len(f.created))
+	}
+	f.failHandle = 0
+	// The new counter cannot be made at all.
+	f.createErr = tpmcounter.ErrUnsupported
+	if r := rb(); !errors.Is(r.e, tpmcounter.ErrUnsupported) {
+		t.Fatalf("no TPM: %v", r.e)
+	}
+	f.createErr = nil
+	// The container cannot be rebound (the new counter cannot increment): the index is deleted again.
+	f.failIncAt1 = true
+	if r := rb(); r.e == nil || !f.ctr.destroyed {
+		t.Fatalf("failed rebind: %v", r.e)
+	}
+	f.failIncAt1 = false
+
+	// Refusals before anything is made.
+	if r := run(nil, "counter", "rebind", path, "--password-file", pw); r.e == nil || !strings.Contains(r.e.Error(), "--counter tpm") {
+		t.Fatalf("no --counter: %v", r.e)
+	}
+	if r := run(nil, "counter", "rebind", path, "--password-file", pw, "--counter", "sgx"); r.e == nil {
+		t.Fatal("unknown counter")
+	}
+	if r := rb("--tpm-owner-auth-file", filepath.Join(dir, "none")); r.e == nil {
+		t.Fatal("missing owner file")
+	}
+	if r := run(nil, "counter", "rebind", filepath.Join(dir, "none.theca"), "--password-file", pw, "--counter", "tpm"); r.e == nil {
+		t.Fatal("missing container")
+	}
+	if r := run(nil, "counter", "rebind", path, "--password-file", filepath.Join(dir, "none"), "--counter", "tpm"); r.e == nil {
+		t.Fatal("missing password file")
+	}
+	n := len(f.created)
+	wrong := secretFile(t, dir, "wrong", "not the password\n", 0o600)
+	if r := run(nil, "counter", "rebind", path, "--password-file", wrong, "--counter", "tpm"); r.e == nil || len(f.created) != n {
+		t.Fatalf("a wrong password made a counter: %v", r.e)
+	}
+}
+
+// On a software TPM: the counter deleted, then the TPM replaced (what TPM2_Clear
+// or a reinstall amounts to: no such index any more). The container is refused
+// with the recovery named, `counter rebind` binds it again, and it opens.
+func TestCounterTPMSwtpmRecovery(t *testing.T) {
+	dev := startSwtpmDevice(t)
+	dir := t.TempDir()
+	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	path := filepath.Join(dir, "c.theca")
+	flags := func(d string) []string { return []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", d} }
+	if r := run(nil, append([]string{"create", path, "--size", "1M"}, flags(dev)...)...); r.e != nil {
+		t.Fatal(r.e)
+	}
+	// Delete the index, as the owner can.
+	c, err := tpmcounter.Open(tpmcounter.Options{Device: dev, Handle: 0x01500000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Destroy(); err != nil {
+		t.Fatal(err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags(dev)...)...); !errors.Is(r.e, tpmcounter.ErrNoCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
+		t.Fatalf("after the index was deleted: %v", r.e)
+	}
+	r := run(nil, append([]string{"counter", "rebind", path}, flags(dev)...)...)
+	if r.e != nil || !strings.Contains(r.err, "NV index 0x01500000") {
+		t.Fatalf("rebind: %v %q", r.e, r.err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags(dev)...)...); r.e != nil || !strings.Contains(r.out, "rollback protected: true") {
+		t.Fatalf("after the rebind: %v %q", r.e, r.out)
+	}
+	// The protection works again: a copy from before a mount is refused.
+	older, _ := os.ReadFile(path)
+	if r := run(nil, append([]string{"verify", path}, flags(dev)...)...); r.e != nil {
+		t.Fatal(r.e)
+	}
+	if err := os.WriteFile(path, older, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags(dev)...)...); !errors.Is(r.e, theca.ErrRollback) {
+		t.Fatalf("rolled-back copy after a rebind: %v", r.e)
+	}
+
+	// A different TPM (cleared, replaced): the index does not exist there.
+	other := startSwtpmDevice(t)
+	if err := os.WriteFile(path, older, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags(other)...)...); !errors.Is(r.e, tpmcounter.ErrNoCounter) {
+		t.Fatalf("on another TPM: %v", r.e)
+	}
+	if r := run(nil, append([]string{"counter", "rebind", path}, flags(other)...)...); r.e != nil {
+		t.Fatalf("rebind on the other TPM: %v", r.e)
+	}
+	if r := run(nil, append([]string{"info", path}, flags(other)...)...); r.e != nil {
+		t.Fatalf("open on the other TPM after the rebind: %v", r.e)
 	}
 }
 

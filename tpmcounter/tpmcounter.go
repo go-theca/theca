@@ -29,6 +29,9 @@ var (
 	ErrUnsupported = errors.New("tpmcounter: no TPM interface on this platform (name a device with --tpm-device)")
 	// ErrNotCounter: the NV index exists but is not a theca rollback counter.
 	ErrNotCounter = errors.New("tpmcounter: the NV index is not a rollback counter created by theca")
+	// ErrNoCounter: the NV index is not defined on this TPM (it was undefined,
+	// the TPM was cleared, or this is another TPM).
+	ErrNoCounter = errors.New("tpmcounter: the TPM has no NV index at the counter's handle")
 	// ErrAuthTooLong: an authValue longer than a SHA-256 digest (Part 3 31.3.1).
 	ErrAuthTooLong = errors.New("tpmcounter: an authValue is at most 32 bytes")
 	// ErrNoFreeHandle: every handle in the search range is taken.
@@ -194,10 +197,14 @@ func Open(o Options) (*Counter, error) {
 	c := &Counter{opts: o, handle: o.Handle}
 	err := o.with(func(t nvTPM) error {
 		pub, name, err := t.NVReadPublic(o.Handle)
+		var te *tpm2.TPMError
+		if errors.As(err, &te) && te.RC&0x3F == rcHandle {
+			return fmt.Errorf("%w (handle %#08x)", ErrNoCounter, o.Handle)
+		}
 		if err != nil {
 			return err
 		}
-		if pub.Attributes&^tpm2.NVWritten != tpm2.CounterAttributes || pub.DataSize != tpm2.CounterSize {
+		if !tpm2.IsCounterAttributes(pub.Attributes) || pub.DataSize != tpm2.CounterSize {
 			return fmt.Errorf("%w (handle %#08x)", ErrNotCounter, o.Handle)
 		}
 		c.name = name

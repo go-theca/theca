@@ -144,10 +144,100 @@ func (s *secrets) openContainer(cmd *cobra.Command, f *os.File, u theca.Unlock) 
 	return c, nil
 }
 
-// hint turns the library's "missing counter" refusal into one that names the flag.
+// recovery is the sentence that names the way back when the counter is gone.
+const recovery = "if the counter was deleted or the TPM was cleared or replaced, " +
+	"`theca counter rebind FILE --counter tpm` (with the owner password, and the factors that open the container) binds it to a new counter; rollback protection then restarts from that moment"
+
+// hint turns the library's counter refusals into ones that name the flag or
+// the recovery.
 func (f *tpmFlags) hint(err error) error {
-	if errors.Is(err, theca.ErrCounter) && f.counter == "" {
+	switch {
+	case errors.Is(err, theca.ErrCounter) && f.counter == "":
 		return fmt.Errorf("%w: this container is bound to a TPM counter, give --counter tpm", err)
+	case errors.Is(err, tpmcounter.ErrNoCounter), errors.Is(err, tpmcounter.ErrNotCounter), errors.Is(err, theca.ErrCounter):
+		return fmt.Errorf("%w: %s", err, recovery)
 	}
 	return err
+}
+
+// counterCmd is `theca counter`, the recovery commands for the rollback counter.
+func counterCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "counter",
+		Short: "Recover the rollback counter of a container",
+	}
+	root.AddCommand(rebindCmd())
+	return root
+}
+
+func rebindCmd() *cobra.Command {
+	var s secrets
+	cmd := &cobra.Command{
+		Use:   "rebind FILE",
+		Short: "Bind a container to a NEW TPM counter (the old one is gone)",
+		Long: "Bind the container to a new TPM counter, when the old one was deleted (the NV\n" +
+			"index undefined, the TPM cleared or replaced) or when you want another.\n" +
+			"It needs the factors that open the container and the TPM owner password\n" +
+			"(--tpm-owner-auth-file). The new counter is made at the handle the container\n" +
+			"records when that handle is free, otherwise at the first free one.\n\n" +
+			"Rollback protection restarts from now: nothing is checked against the old\n" +
+			"counter, so a copy of the container made earlier is judged by the new one.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			on, err := s.tpm.on()
+			if err != nil {
+				return err
+			}
+			if !on {
+				return errors.New("counter rebind needs --counter tpm")
+			}
+			o, wipeOpts, err := s.tpm.options(true)
+			defer wipeOpts()
+			if err != nil {
+				return err
+			}
+			f, err := os.OpenFile(args[0], os.O_RDWR, 0)
+			if err != nil {
+				return err
+			}
+			u, wipe, err := s.unlock(cmd)
+			defer wipe()
+			if err != nil {
+				f.Close()
+				return err
+			}
+			var made tpmCounter
+			oo := theca.OpenOptions{RebindFor: func(h uint32, _ []byte) (theca.Counter, error) {
+				try := o
+				if try.Handle == 0 {
+					try.Handle = h // the recorded handle, if it is free
+				}
+				c, err := createCounter(try)
+				if err != nil && o.Handle == 0 && try.Handle != 0 {
+					try.Handle = 0 // taken: the first free one
+					c, err = createCounter(try)
+				}
+				if err != nil {
+					return nil, err
+				}
+				made = c
+				return c, nil
+			}}
+			c, err := theca.Open(cmd.Context(), theca.FileBacking{File: f}, u, oo)
+			if err != nil {
+				if made != nil {
+					made.Destroy() // the container was not rebound: do not leave the index behind
+				}
+				f.Close()
+				return err
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: the container is now bound to a NEW TPM counter, NV index %#08x. "+
+				"Rollback protection restarts from now: an older copy is not checked against the old counter, "+
+				"and the old counter, if it still exists, is not deleted. Give --counter tpm to every command that opens this container.\n",
+				c.Info().CounterHandle)
+			return closeBoth(c, f, nil)
+		},
+	}
+	s.unlockFlags(cmd)
+	return cmd
 }
