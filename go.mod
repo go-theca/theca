@@ -11,6 +11,7 @@ require (
 	github.com/go-filesystems/exfat v0.7.0
 	github.com/go-filesystems/smb v0.16.1
 	github.com/go-macos/fido v0.5.2
+	github.com/go-scikit/refbench v0.3.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.59.0
 	golang.org/x/term v0.48.0
@@ -24,6 +25,7 @@ require (
 	github.com/go-filesystems/hostcopy v0.1.0 // indirect
 	github.com/go-filesystems/inflight v0.2.0 // indirect
 	github.com/go-filesystems/interface v0.6.0 // indirect
+	github.com/go-fleettools/fleettools v0.81.0 // indirect
 	github.com/go-freedesktop/gvfs v0.1.1 // indirect
 	github.com/go-macos/iokit v0.14.0 // indirect
 	github.com/go-macos/netfs v0.1.0 // indirect
@@ -40,7 +42,7 @@ require (
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect

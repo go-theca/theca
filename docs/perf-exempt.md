@@ -16,3 +16,21 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `FIDO2Factor`: one HKDF.
 - `Factor.Zeroize`: clears 32 bytes.
 - `FileBacking.Size`: one `fstat`.
+- `Container.RemoveFactors`: derives the factors given (the `PasswordFactor` case for a password), trial-opens the slots (16 of 2 KiB) and rewrites the removed ones with one commit. Rare and interactive. No C counterpart.
+- `Container.Slots`: trial-opens up to 16 slots of 2 KiB each, one TA1 open per slot (the `Sector/Open` row per byte). No C counterpart.
+- `Container.SlotsOf`: the same trial-opens as `Slots`, for a given factor set.
+- `fido2.Device.Close`: releases a USB HID handle.
+- `fido2.Device.Derive`: dominated by the USB round trip and the user's touch on the key, in milliseconds to seconds.
+- `fido2.Device.Enroll`: dominated by the user's touch on the key.
+- `fido2.Open`: enumerates and opens a HID device. Operating-system I/O.
+- `share.CheckAddr`: parses a listen address and refuses a non-loopback one without `--network`. A few string operations.
+- `share.Format`: lays an exFAT file system onto an empty volume, once at creation. Its cost is the sector writes (the `Sector/Seal` row) plus a few metadata structures. No C program formats a Theca volume.
+- `share.Share.Addr`: returns a stored string.
+- `share.Share.Done`: returns a channel.
+- `share.Share.Err`: returns a stored error.
+- `share.Share.MountPath`: returns a stored string.
+- `share.Share.Password`: returns a stored string.
+- `share.Share.Stop`: closes the listener and unmounts. Bounded by the operating system.
+- `share.Share.URL`: formats a URL from stored fields.
+- `share.Share.User`: returns a stored string.
+- `share.Start`: opens the listener and, with `--mount`, asks the file manager to mount the share. Bounded by the network stack and the file manager. The served path is `Container.ReadAt` and `Container.WriteAt`.
