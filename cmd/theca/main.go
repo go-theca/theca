@@ -344,7 +344,7 @@ func RootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd(), serveCmd())
+	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd(), serveCmd(), slotsCmd())
 	return root
 }
 
