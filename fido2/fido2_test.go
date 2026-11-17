@@ -31,6 +31,13 @@ type fakeKey struct {
 
 	pinSeen string
 	tokens  []authn.Permissions
+
+	// Fingerprint scripting: uvSeq answers UVToken calls in order (nil is a
+	// success), uvRetries is what getUVRetries says.
+	uvSeq        []error
+	uvCalls      int
+	uvRetries    int
+	uvRetriesErr error
 }
 
 func newFake(uv bool) *fakeKey {
@@ -54,9 +61,21 @@ func (f *fakeKey) PINToken(_ context.Context, pin string, _ authn.PINProtocol, p
 	return authn.Token{}, f.pinErr
 }
 func (f *fakeKey) UVToken(_ context.Context, _ authn.PINProtocol, p authn.Permissions, _ string) (authn.Token, error) {
+	f.uvCalls++
+	if len(f.uvSeq) > 0 { // a scripted run of answers, one per call
+		err := f.uvSeq[0]
+		f.uvSeq = f.uvSeq[1:]
+		if err != nil {
+			return authn.Token{}, err
+		}
+		f.tokens = append(f.tokens, p)
+		return authn.Token{}, nil
+	}
 	f.tokens = append(f.tokens, p)
 	return authn.Token{}, f.uvErr
 }
+
+func (f *fakeKey) UVRetries(context.Context) (int, error) { return f.uvRetries, f.uvRetriesErr }
 func (f *fakeKey) MakeCredential(_ context.Context, r authn.MakeCredentialRequest) (*authn.Attestation, error) {
 	if f.mcErr != nil {
 		return nil, f.mcErr
@@ -344,5 +363,137 @@ func TestTheTransportIsReached(t *testing.T) {
 	k, err := openKey(ctx) // the default, which is openTransport
 	if err == nil {
 		k.Close()
+	}
+}
+
+// The built-in verification paths (CTAP 2.1 6.4 "uv", 6.5.5.7.3).
+
+func statusErr(s authn.Status) error { return &authn.StatusError{Status: s} }
+
+// bio is a Bio-like fake: uv configured and a PIN set.
+func bio(t *testing.T, f *fakeKey, pin func() (string, error)) (*Device, *[]string) {
+	t.Helper()
+	f.info.Options["uv"] = true
+	withFake(t, f, nil)
+	var said []string
+	d, err := Open(ctx, pin, WithNotice(func(s string) { said = append(said, s) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d, &said
+}
+
+func TestUVIsUsedOnlyWhenConfigured(t *testing.T) {
+	// "uv" false: capable but no finger enrolled -> the PIN, no UV call.
+	f := newFake(false)
+	f.info.Options["uv"] = false
+	withFake(t, f, nil)
+	d, err := Open(ctx, pinFn("1234"))
+	if err != nil || d.uv {
+		t.Fatalf("uv=false key: %v uv=%v", err, d.uv)
+	}
+	if _, err := d.Derive(ctx, salts(1)); !errors.Is(err, theca.ErrNoCredential) || f.uvCalls != 0 || f.pinSeen != "1234" {
+		t.Fatalf("expected a PIN-only walk: %v uvCalls=%d pin=%q", err, f.uvCalls, f.pinSeen)
+	}
+}
+
+func TestOneVerificationPerUnlockWithAFingerprint(t *testing.T) {
+	f := newFake(false)
+	d, said := bio(t, f, pinFn("1234"))
+	if _, err := d.Enroll(ctx, salts(1)); err != nil {
+		t.Fatal(err)
+	}
+	f.uvCalls, f.tokens = 0, nil
+	if _, err := d.Derive(ctx, salts(1)); err != nil {
+		t.Fatal(err)
+	}
+	// One token, one UV: the key sets userPresent itself (6.5.5.7.3 step 3.12),
+	// so getAssertion asks for no second touch (6.2.2 step 9.1.2).
+	if f.uvCalls != 1 || len(f.tokens) != 1 || len(*said) != 0 {
+		t.Fatalf("uvCalls=%d tokens=%v said=%v", f.uvCalls, f.tokens, *said)
+	}
+}
+
+func TestAFingerprintThatFailsFallsBackToThePIN(t *testing.T) {
+	invalid, blocked, notAllowed := statusErr(statusUVInvalid), statusErr(statusUVBlocked), statusErr(statusNotAllowed)
+	cases := map[string]struct {
+		seq     []error
+		retries int
+		rerr    error
+		reason  string
+		uvCalls int
+	}{
+		"blocked":              {seq: []error{blocked}, reason: "the fingerprint is blocked", uvCalls: 1},
+		"not configured":       {seq: []error{notAllowed}, reason: "no fingerprint is enrolled", uvCalls: 1},
+		"invalid, none left":   {seq: []error{invalid}, retries: 0, reason: "the fingerprint was not recognised", uvCalls: 1},
+		"invalid, unreadable":  {seq: []error{invalid}, rerr: errors.New("boom"), reason: "the fingerprint was not recognised", uvCalls: 1},
+		"invalid then blocked": {seq: []error{invalid, blocked}, retries: 2, reason: "the fingerprint is blocked", uvCalls: 2},
+		"always invalid":       {seq: []error{invalid, invalid, invalid, invalid, invalid, invalid}, retries: 9, reason: "the fingerprint was not recognised", uvCalls: maxUVAttempts},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(false)
+			f.uvSeq, f.uvRetries, f.uvRetriesErr = c.seq, c.retries, c.rerr
+			d, said := bio(t, f, pinFn("1234"))
+			if _, err := d.Enroll(ctx, salts(1)); err != nil {
+				t.Fatal(err)
+			}
+			if f.pinSeen != "1234" || f.uvCalls != c.uvCalls || d.uv {
+				t.Fatalf("pin=%q uvCalls=%d (want %d) uv=%v", f.pinSeen, f.uvCalls, c.uvCalls, d.uv)
+			}
+			if last := (*said)[len(*said)-1]; last != c.reason+" — using the PIN." {
+				t.Fatalf("last notice %q", last)
+			}
+			// The second token of the enrolment went straight to the PIN.
+			if len(f.tokens) != 2 || f.uvCalls != c.uvCalls {
+				t.Fatalf("tokens %v uvCalls %d", f.tokens, f.uvCalls)
+			}
+		})
+	}
+}
+
+func TestARetryShowsTheTriesLeftAndThenSucceeds(t *testing.T) {
+	f := newFake(false)
+	f.uvSeq, f.uvRetries = []error{statusErr(statusUVInvalid), nil}, 2
+	d, said := bio(t, f, pinFn("1234"))
+	if _, err := d.Derive(ctx, salts(1)); !errors.Is(err, theca.ErrNoCredential) {
+		t.Fatal(err)
+	}
+	if len(*said) != 1 || (*said)[0] != "Fingerprint not recognised (2 tries left); try again." || f.pinSeen != "" {
+		t.Fatalf("said %v pin %q", *said, f.pinSeen)
+	}
+}
+
+func TestNoPINToFallBackToIsAnErrorNotAHang(t *testing.T) {
+	for name, mk := range map[string]func(f *fakeKey) func() (string, error){
+		"no PIN function": func(*fakeKey) func() (string, error) { return nil },
+		"no PIN set":      func(f *fakeKey) func() (string, error) { delete(f.info.Options, "clientPin"); return pinFn("1") },
+	} {
+		f := newFake(false)
+		f.uvSeq = []error{statusErr(statusUVBlocked)}
+		d, _ := bio(t, f, mk(f))
+		if _, err := d.Derive(ctx, salts(1)); !errors.Is(err, ErrUVLocked) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestATouchRefusedOnABioKeyIsNotAUVFailure(t *testing.T) {
+	f := newFake(false)
+	f.uvSeq = []error{statusErr(authn.StatusUserActionTimeout)}
+	d, said := bio(t, f, pinFn("1234"))
+	if _, err := d.Derive(ctx, salts(1)); !errors.Is(err, ErrNotTouched) || f.pinSeen != "" || len(*said) != 0 {
+		t.Fatalf("%v pin=%q said=%v", err, f.pinSeen, *said)
+	}
+}
+
+func TestNoNoticeSinkIsFine(t *testing.T) {
+	f := newFake(false)
+	f.uvSeq = []error{statusErr(statusUVBlocked)}
+	f.info.Options["uv"] = true
+	withFake(t, f, nil)
+	d, _ := Open(ctx, pinFn("1234"))
+	if _, err := d.Derive(ctx, salts(1)); !errors.Is(err, theca.ErrNoCredential) {
+		t.Fatal(err)
 	}
 }

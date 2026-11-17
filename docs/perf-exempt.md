@@ -41,3 +41,4 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `tpmcounter.Counter.Destroy`: one `NV_UndefineSpace`, only to undo a failed create.
 - `tpmcounter.Counter.Handle`: returns a stored integer.
 - `tpmcounter.Counter.Name`: returns a stored slice.
+- `fido2.WithNotice`: stores one function pointer in an option.

@@ -38,7 +38,17 @@ var (
 	ErrNotTouched = errors.New("fido2: the key was not touched in time")
 	// ErrPINLocked: the key will not take a PIN now.
 	ErrPINLocked = errors.New("fido2: the key's PIN is blocked or needs the key to be unplugged")
+	// ErrUVLocked: the key's own verification (fingerprint) cannot be used and
+	// there is no PIN to fall back to.
+	ErrUVLocked = errors.New("fido2: the key's built-in verification is unavailable")
 )
+
+// Option adjusts a Device at Open.
+type Option func(*Device)
+
+// WithNotice makes Open's Device report what it does on the person's behalf
+// (a fingerprint retry, the fall back to the PIN) through f.
+func WithNotice(f func(string)) Option { return func(d *Device) { d.notice = f } }
 
 // key is the part of *authn.Key this package uses; tests replace it.
 type key interface {
@@ -46,6 +56,7 @@ type key interface {
 	PINRetries(context.Context) (authn.Retries, error)
 	PINToken(context.Context, string, authn.PINProtocol, authn.Permissions, string) (authn.Token, error)
 	UVToken(context.Context, authn.PINProtocol, authn.Permissions, string) (authn.Token, error)
+	UVRetries(context.Context) (int, error)
 	MakeCredential(context.Context, authn.MakeCredentialRequest) (*authn.Attestation, error)
 	GetAssertion(context.Context, authn.GetAssertionRequest) (*authn.Assertion, error)
 	GetAssertions(context.Context, authn.GetAssertionRequest, int) ([]*authn.Assertion, error)
@@ -54,11 +65,13 @@ type key interface {
 
 // Device is one authenticator, ready to enrol or derive.
 type Device struct {
-	k     key
-	pin   func() (string, error)
-	proto authn.PINProtocol
-	uv    bool      // built-in user verification (a fingerprint)
-	win   *platform // Windows: webauthn.dll does CTAP, the PIN and the UI; k is nil
+	k      key
+	pin    func() (string, error)
+	proto  authn.PINProtocol
+	uv     bool // built-in user verification is CONFIGURED (option "uv" true; false or absent: no)
+	canPIN bool // a PIN is set (option "clientPin" true) and a function can ask for it
+	notice func(string)
+	win    *platform // Windows: webauthn.dll does CTAP, the PIN and the UI; k is nil
 }
 
 var _ theca.FIDO2 = (*Device)(nil)
@@ -76,7 +89,18 @@ var (
 // Open finds the attached key and checks that it can hold a Theca credential:
 // hmac-secret, credProtect, discoverable credentials, and a way to verify
 // the person (its own, or a PIN, which pin returns when asked).
-func Open(ctx context.Context, pin func() (string, error)) (*Device, error) {
+func Open(ctx context.Context, pin func() (string, error), opts ...Option) (*Device, error) {
+	d, err := open(ctx, pin)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range opts {
+		o(d)
+	}
+	return d, nil
+}
+
+func open(ctx context.Context, pin func() (string, error)) (*Device, error) {
 	if goos == "windows" {
 		// Windows will not let an unelevated process open the key (1903+); it
 		// does the PIN and the dialog itself, so pin is not used.
@@ -111,13 +135,14 @@ func newDevice(ctx context.Context, k key, pin func() (string, error)) (*Device,
 	if !info.Has("rk") || !info.Has("pinUvAuthToken") {
 		return nil, fmt.Errorf("%w: no discoverable credentials or no pinUvAuthToken", ErrUnsuitable)
 	}
-	d := &Device{k: k, pin: pin, proto: authn.PINProtocolOne, uv: info.Has("uv")}
+	d := &Device{k: k, pin: pin, proto: authn.PINProtocolOne, uv: info.Has("uv"),
+		canPIN: info.Has("clientPin") && pin != nil}
 	for _, p := range info.PINProtocols {
 		if p == uint(authn.PINProtocolTwo) {
 			d.proto = authn.PINProtocolTwo
 		}
 	}
-	if !d.uv && (!info.Has("clientPin") || pin == nil) {
+	if !d.uv && !d.canPIN {
 		return nil, fmt.Errorf("%w: it has no built-in verification, and no PIN is set or none can be asked", ErrUnsuitable)
 	}
 	return d, nil
@@ -131,11 +156,79 @@ func (d *Device) Close() error {
 	return d.k.Close()
 }
 
-// token verifies the person for one permission.
+// Status codes of CTAP 2.1 section 8.2 that go-authn/fido does not name.
+const (
+	statusNotAllowed authn.Status = 0x30 // built-in UV supported but not configured (6.5.5.7.3 step 3.5)
+	statusUVBlocked  authn.Status = 0x3c // built-in user verification is disabled
+	statusUVInvalid  authn.Status = 0x3f // built-in user verification unsuccessful; the platform SHOULD retry
+)
+
+// maxUVAttempts bounds the fingerprint retries of one verification, whatever
+// the key says it has left.
+const maxUVAttempts = 5
+
+// say tells the person something the key's behaviour makes necessary.
+func (d *Device) say(msg string) {
+	if d.notice != nil {
+		d.notice(msg)
+	}
+}
+
+// uvToken asks for a token with the key's own verification (CTAP 2.1
+// 6.5.5.7.3). A non-empty reason means built-in UV cannot be used now and the
+// caller may fall back to the PIN; an error is final.
+//
+// After CTAP2_ERR_UV_INVALID the platform SHOULD read uvRetries and may retry
+// while some remain; CTAP2_ERR_UV_BLOCKED, no attempts left, or UV not
+// configured (CTAP2_ERR_NOT_ALLOWED) end built-in UV and, with clientPin set,
+// the platform MAY fall back to the PIN (same note). A refused touch or a
+// timeout is not a UV failure: it is returned, never answered with a PIN.
+func (d *Device) uvToken(ctx context.Context, perm authn.Permissions) (tok authn.Token, reason string, err error) {
+	for attempt := 1; ; attempt++ {
+		tok, err = d.k.UVToken(ctx, d.proto, perm, RPID)
+		if err == nil {
+			return tok, "", nil
+		}
+		var se *authn.StatusError
+		if !errors.As(err, &se) {
+			return authn.Token{}, "", err
+		}
+		switch se.Status {
+		case statusUVBlocked:
+			return authn.Token{}, "the fingerprint is blocked", nil
+		case statusNotAllowed:
+			return authn.Token{}, "no fingerprint is enrolled", nil
+		case statusUVInvalid:
+			n, rerr := d.k.UVRetries(ctx)
+			if rerr != nil || n <= 0 || attempt >= maxUVAttempts {
+				return authn.Token{}, "the fingerprint was not recognised", nil
+			}
+			d.say(fmt.Sprintf("Fingerprint not recognised (%d tries left); try again.", n))
+			continue
+		}
+		return authn.Token{}, "", mapErr(err)
+	}
+}
+
+// token verifies the person for one permission: with the key's own
+// verification when it is configured (uv == true, CTAP 2.1 6.4), otherwise, or
+// when that fails, with the PIN.
+//
+// One touch per unlock holds with a built-in UV token: a successful UV is
+// evidence of user interaction, so the token's userPresent flag is set (6.5.5.7.3
+// step 3.12) and getAssertion, finding it set, asks for no second touch (6.2.2
+// step 9.1.2).
 func (d *Device) token(ctx context.Context, perm authn.Permissions) (authn.Token, error) {
 	if d.uv {
-		tok, err := d.k.UVToken(ctx, d.proto, perm, RPID)
-		return tok, mapErr(err)
+		tok, reason, err := d.uvToken(ctx, perm)
+		if err != nil || reason == "" {
+			return tok, err
+		}
+		if !d.canPIN {
+			return authn.Token{}, fmt.Errorf("%w: %s, and no PIN is set or can be asked", ErrUVLocked, reason)
+		}
+		d.uv = false // later tokens of this Device go straight to the PIN
+		d.say(reason + " — using the PIN.")
 	}
 	r, err := d.k.PINRetries(ctx)
 	if err != nil {

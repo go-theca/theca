@@ -151,6 +151,11 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
 - Nothing about the key is written into the container but its pairwise
   slots. The key is asked once per unlock, for all its Theca credentials (one
   touch).
+- A key with a fingerprint enrolled (CTAP option `uv` true, e.g. a YubiKey Bio)
+  verifies with it: one fingerprint per unlock, no second touch. A fingerprint
+  that is not recognised is retried while the key has tries left (the count is
+  shown); when it is blocked, exhausted, or none is enrolled, theca says so
+  ("the fingerprint is blocked — using the PIN.") and asks for the PIN instead, if one is set.
 - A key without a fingerprint asks for its PIN. It is read from `--pin-file`
   (mode `0600` or stricter) or from the terminal, never from an argument.
 - What each OS does (the transport is chosen by `GOOS`):
