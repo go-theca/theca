@@ -42,8 +42,8 @@ theca export vault.theca --password-file pw > disk.img
   or `--recovery-file`. It is not one atomic transaction: on an error, the bytes
   written before the error are kept.
 - Every command that opens a container states whether it is protected against
-  rollback. In this version it never is: there is no hardware counter on the
-  command line yet, so an older copy of a container would be accepted.
+  rollback. Without `--counter tpm` it is not: an older copy of the container
+  would be accepted (see "Rollback counter" below).
 
 ### Keyslots
 
@@ -169,7 +169,44 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
 Design and trade-offs: [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md) §9
 "H2 revised", and [docs/DESIGN.md](docs/DESIGN.md) §19 I21.
 
-Not in this version: slot management for FIDO2 factor sets on the command line (`slots` handles the
+### Rollback counter: a TPM 2.0 NV counter
+
+```sh
+theca create vault.theca --size 1G --counter tpm                 # defines an NV counter, binds the container to it
+theca info   vault.theca --counter tpm                           # rollback protected: true (TPM NV counter 0x01500000 ...)
+theca create v2.theca --size 1G --counter tpm --tpm-auth-file ix --tpm-owner-auth-file owner
+theca info   vault.theca --counter tpm --accept-rollback          # rebind an older copy on purpose (loud)
+```
+
+- The counter advances once per mount, not per commit. An older copy of the
+  container (any earlier session) is refused with `ErrRollback` before anything
+  is written; the copy taken during the current session is the window that
+  stays open (DESIGN §5.4).
+- Every command that opens the container needs `--counter tpm` again (and
+  `--tpm-auth-file` if you set one), **and opens the file read-write**, because
+  a mount rebinds the header. Without the flag, a protected container is
+  refused with a message naming it.
+- `--tpm-device`: a device path, or `unix:SOCKET` for a software TPM
+  (`swtpm socket --tpm2 --server type=unixio,path=SOCKET ...`). The default is
+  `/dev/tpmrm0` on Linux, which needs permission to open it (usually the
+  `tss` group). macOS has no TPM and Windows (TBS) is not supported yet
+  (go-tpm2 has no TBS transport): both say so unless a device is named.
+- `--tpm-owner-auth-file` is used by `create` only; `--tpm-auth-file` is the
+  counter's own authValue (at most 32 bytes), needed to increment and read it.
+  Both are files that only their owner can read, never arguments or
+  environment variables.
+- Stated limit: the owner of the TPM can delete the counter (an index with
+  `POLICY_DELETE` can only be created with platform authorization), and
+  `TPM2_Clear` removes it. That is a denial of service, not a way back: a
+  redefined counter starts above every earlier count, so the container is
+  refused until `--accept-rollback` (DESIGN §19 I22). One counter per
+  container.
+- Library: `tpmcounter.Create`, `tpmcounter.Open`, `OpenOptions.CounterFor`.
+  Built on go-tpm2/tpm2 v0.9.0 `NVDefineCounter`, `NVIncrementAuth`,
+  `NVReadCounter`.
+
+Not in this version: the TPM counter on Windows, slot management for FIDO2
+factor sets on the command line (`slots` handles the
 password and the recovery code).
 
 ## Library

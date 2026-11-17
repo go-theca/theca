@@ -221,7 +221,12 @@ type CreateOptions struct {
 
 // OpenOptions configures Open.
 type OpenOptions struct {
-	Counter        Counter
+	Counter Counter
+	// CounterFor, when Counter is nil, is asked for the counter once the header
+	// has been authenticated and names one (its handle and NV Name are only
+	// known then: the header has no plaintext fields). An error it returns
+	// refuses the open.
+	CounterFor     func(handle uint32, name []byte) (Counter, error)
 	AcceptRollback bool
 	Rand           io.Reader
 	// CacheBytes bounds the memory the container keeps for verified, clean
@@ -270,6 +275,7 @@ type Info struct {
 	Epoch               uint64
 	SlotsUsed           int
 	RollbackProtected   bool
+	CounterHandle       uint32 // the counter's handle; 0 when RollbackProtected is false
 	JournalEntries      uint32
 	ReplayedTransaction bool
 }
@@ -435,6 +441,7 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 		}
 		c.body.Counter = &format.Counter{Handle: o.Counter.Handle(), Name: o.Counter.Name(), Bound: c0}
 		c.info.RollbackProtected = true
+		c.info.CounterHandle = o.Counter.Handle()
 	}
 	if err := c.writeHeader(); err != nil {
 		return nil, "", err
@@ -473,6 +480,10 @@ func (c *Container) fillInfo() {
 	c.info.SlotsUsed = n
 	c.info.JournalEntries = c.body.JournalEntries
 	c.info.RollbackProtected = c.body.Counter != nil
+	c.info.CounterHandle = 0
+	if c.body.Counter != nil {
+		c.info.CounterHandle = c.body.Counter.Handle
+	}
 }
 
 func (c *Container) freeSlots() []int {

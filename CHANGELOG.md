@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.9.0
+
+- TPM rollback counter. `theca create --counter tpm` defines a TPM 2.0 NV
+  counter (go-tpm2/tpm2 v0.9.0) and binds the container to it; every command
+  that opens the container takes `--counter tpm` and refuses an older copy
+  (DESIGN §5.4: checked before journal replay, incremented once per mount).
+  `info` says protected or not and names the NV index. New package
+  `tpmcounter`; `OpenOptions.CounterFor` finds the counter from the
+  authenticated header; `Info.CounterHandle`; flags `--tpm-device`,
+  `--tpm-handle`, `--tpm-auth-file`, `--tpm-owner-auth-file`,
+  `--accept-rollback`. Linux `/dev/tpmrm0` or a software TPM
+  (`unix:SOCKET`); macOS and Windows say there is no TPM interface.
+- A mount under a counter rebinds the header, so `info`, `verify` and
+  `export` open the file read-write when `--counter tpm` is given.
+- The NV Name changes once, at the first increment (it covers TPMA_NV_WRITTEN):
+  the counter reads its Name again after an increment. Found by the
+  swtpm-backed test.
+- DESIGN §19 I22: `POLICY_DELETE` cannot be used on an owner-defined index
+  (it needs platform authorization), so the owner can delete the counter:
+  a denial of service, never a rollback.
+
 ## v0.8.0
 
 - FIDO2 on Linux (go-gnulinux/fido v0.5.1, hidraw) and Windows
