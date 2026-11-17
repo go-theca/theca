@@ -49,14 +49,26 @@ type fakeTPM struct {
 	openErr    error
 	failIncAt1 bool
 	failHandle uint32 // createCounter refuses this handle (taken)
-	destroyed  []*fakeCounter
+	removeErr  error
+	removed    []uint32 // handles removeCounter was asked about
 }
 
 func installFakeTPM(t *testing.T) *fakeTPM {
 	t.Helper()
 	f := &fakeTPM{}
-	sc, so := createCounter, openCounter
-	t.Cleanup(func() { createCounter, openCounter = sc, so })
+	sc, so, sr := createCounter, openCounter, removeCounter
+	t.Cleanup(func() { createCounter, openCounter, removeCounter = sc, so, sr })
+	removeCounter = func(o tpmcounter.Options) (bool, error) {
+		f.removed = append(f.removed, o.Handle)
+		if f.removeErr != nil {
+			return false, f.removeErr
+		}
+		if f.ctr != nil && f.ctr.h == o.Handle && !f.ctr.destroyed {
+			f.ctr.destroyed = true
+			return true, nil
+		}
+		return false, nil
+	}
 	createCounter = func(o tpmcounter.Options) (tpmCounter, error) {
 		o.Auth, o.OwnerAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...) // the CLI wipes its copies
 		f.created = append(f.created, o)
@@ -258,8 +270,25 @@ func TestCounterRebind(t *testing.T) {
 	if f.created[0].Handle != 0x01500042 || string(f.created[0].OwnerAuth) != "owner secret" || f.ctr == old || f.ctr.v != 41 {
 		t.Fatalf("created %+v, counter %+v", f.created, f.ctr)
 	}
+	// The healthy old counter was deleted first, and the warning says so.
+	if !old.destroyed || len(f.removed) != 1 || f.removed[0] != 0x01500042 || !strings.Contains(r.err, "has been DELETED") {
+		t.Fatalf("old counter: destroyed %v, asked %x, warning %q", old.destroyed, f.removed, r.err)
+	}
 	if r := info(); r.e != nil || !strings.Contains(r.out, "rollback protected: true") {
 		t.Fatalf("after the rebind: %v %q", r.e, r.out)
+	}
+
+	// The old counter cannot be checked or deleted: nothing is made, the rebind stops.
+	f.removeErr = errors.New("tpm unreachable")
+	n0 := len(f.created)
+	if r := rb(); r.e == nil || len(f.created) != n0 {
+		t.Fatalf("rebind with an undeletable old counter: %v, created %d more", r.e, len(f.created)-n0)
+	}
+	f.removeErr = nil
+	// The old counter is already absent: said so.
+	f.ctr.destroyed = true
+	if r := rb(); r.e != nil || !strings.Contains(r.err, "already absent") {
+		t.Fatalf("absent old counter: %v %q", r.e, r.err)
 	}
 
 	// The recorded handle is taken: the first free one.
@@ -379,6 +408,47 @@ func TestRealCounterConstructorsRefuse(t *testing.T) {
 	}
 	if c, err := openCounter(o); err == nil || c != nil {
 		t.Fatalf("open: %v %v", c, err)
+	}
+	if removed, err := removeCounter(o); err == nil || removed {
+		t.Fatalf("remove: %v %v", removed, err)
+	}
+}
+
+// A rebind of a HEALTHY counter deletes it: a copy taken just before is
+// refused. Without that, the old counter stays at the value the copy is bound
+// to, and the copy opens with no flag: a silent rollback to before the rebind.
+func TestCounterTPMSwtpmRebindOfAHealthyCounter(t *testing.T) {
+	dev := startSwtpmDevice(t)
+	dir := t.TempDir()
+	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	path := filepath.Join(dir, "c.theca")
+	flags := []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", dev}
+	if r := run(nil, append([]string{"create", path, "--size", "1M"}, flags...)...); r.e != nil {
+		t.Fatal(r.e)
+	}
+	before, err := os.ReadFile(path) // the copy an attacker took just before the rebind
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := run(nil, append([]string{"counter", "rebind", path}, flags...)...)
+	if r.e != nil || !strings.Contains(r.err, "has been DELETED") {
+		t.Fatalf("rebind: %v %q", r.e, r.err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags...)...); r.e != nil {
+		t.Fatalf("the rebound container: %v", r.e)
+	}
+	cur, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags...)...); r.e == nil {
+		t.Fatal("a copy from before the rebind opened: the rebind did not delete the old counter")
+	}
+	if err := os.WriteFile(path, cur, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := run(nil, append([]string{"info", path}, flags...)...); r.e != nil {
+		t.Fatalf("the current copy: %v", r.e)
 	}
 }
 

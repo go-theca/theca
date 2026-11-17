@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.10.1
+
+- `counter rebind` deletes the old counter when it is still there (with the
+  owner password it already holds), before binding the new one. Before, a
+  healthy old counter stayed at its value, so a copy of the container taken
+  just before the rebind (old handle, bound equal to that value) opened with no
+  flag: a silent rollback to before the rebind. The warning says whether the
+  old counter was deleted or already absent. If it cannot be checked or
+  deleted, nothing is made and the rebind stops. swtpm test: a pre-rebind copy
+  is refused.
+- The recovery hint says an old copy of the container shows the same message
+  as a reset TPM, and that rebinding is not the way to open an old copy.
+
 ## v0.10.0
 
 From the independent review of v0.9.0.
