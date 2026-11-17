@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.8.0
 
 - FIDO2 on Linux (go-gnulinux/fido v0.5.1, hidraw) and Windows
   (go-mswin/webauthn v0.5.0, `webauthn.dll`; Windows shows its own PIN dialog,
