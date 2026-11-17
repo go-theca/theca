@@ -16,6 +16,9 @@ From the independent review of v0.9.0.
 - New counters carry `TPMA_NV_NO_DA` (go-tpm2/tpm2 v0.10.0): a wrong authValue
   file no longer counts towards the TPM's lockout. Counters made by v0.9.0 are
   still opened.
+- `share.Start` reads `serveSMB` before starting its goroutine: a data race
+  (found on arm64 CI in `TestShareEndsOnAFailure`, twice in a row on this PR)
+  between that goroutine and a test restoring the variable.
 - Documented the limit that the header binds a counter's handle and Name, not
   a TPM (DESIGN §19 I22, README threat model).
 
