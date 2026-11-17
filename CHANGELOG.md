@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
+
+- README: the `--network` live measurement (macOS 27.2.1).
 
 - `Container.RemoveFactors(remove, keep)`, `SlotsOf`, `Slots`, `ErrLastWay`
   (#5): remove a slot by the factors that open it, and refuse, before any
