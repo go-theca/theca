@@ -68,7 +68,14 @@ jobs:
 
       - run: go vet ./...
 
+      # A software TPM runs the counter end to end (tpmcounter, cmd/theca). A
+      # missing swtpm is a failure here, not a skip.
+      - name: Install swtpm
+        run: sudo apt-get update && sudo apt-get install -y swtpm
+
       - name: Test (race, coverage)
+        env:
+          THECA_REQUIRE_SWTPM: '1'
         run: go test -race -coverprofile=cover.out ./...
 
       - name: Coverage is 100%

@@ -89,7 +89,7 @@ func openWithFactors(cmd *cobra.Command, path string, s *secrets) (*theca.Contai
 		}
 		p["rc"] = rc
 	}
-	c, err := theca.Open(cmd.Context(), theca.FileBacking{File: f}, u, theca.OpenOptions{})
+	c, err := s.openContainer(cmd, f, u)
 	if err != nil {
 		p.wipe()
 		return fail(err)

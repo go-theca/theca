@@ -34,3 +34,10 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `share.Share.URL`: formats a URL from stored fields.
 - `share.Share.User`: returns a stored string.
 - `share.Start`: opens the listener and, with `--mount`, asks the file manager to mount the share. Bounded by the network stack and the file manager. The served path is `Container.ReadAt` and `Container.WriteAt`.
+- `tpmcounter.Create`: opens the TPM and runs `NV_DefineSpace` plus a few `NV_ReadPublic` probes, once per container. Bounded by the TPM (tens of milliseconds); there is no C counterpart.
+- `tpmcounter.Open`: opens the TPM and runs one `NV_ReadPublic`, once per mount. Bounded by the TPM.
+- `tpmcounter.Counter.Read`: one TPM `NV_Read`. Bounded by the TPM.
+- `tpmcounter.Counter.Increment`: one TPM `NV_Increment` (an NV write) and one `NV_ReadPublic`, once or twice per mount. Bounded by the TPM's NV write latency.
+- `tpmcounter.Counter.Destroy`: one `NV_UndefineSpace`, only to undo a failed create.
+- `tpmcounter.Counter.Handle`: returns a stored integer.
+- `tpmcounter.Counter.Name`: returns a stored slice.

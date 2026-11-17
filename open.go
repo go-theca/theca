@@ -187,7 +187,7 @@ func Open(ctx context.Context, f Backing, u Unlock, o OpenOptions) (*Container, 
 		ms.Zeroize()
 		return nil, err
 	}
-	if err := c.bindCounter(o.Counter, gate); err != nil {
+	if err := c.bindCounter(gate); err != nil {
 		ms.Zeroize()
 		return nil, err
 	}
@@ -235,6 +235,7 @@ type counterGate struct {
 	bound  bool   // the header names a counter
 	finish bool   // b == c+1: an earlier mount crashed before its increment
 	base   uint64 // the counter value once any unfinished increment is done
+	ctr    Counter
 }
 
 // checkCounter runs the read-only half of the mount protocol of DESIGN 5.4:
@@ -246,6 +247,12 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 		return counterGate{}, nil // "rollback-unprotected": Info.RollbackProtected is false
 	}
 	ctr := o.Counter
+	if ctr == nil && o.CounterFor != nil {
+		var err error
+		if ctr, err = o.CounterFor(b.Handle, b.Name); err != nil {
+			return counterGate{}, err
+		}
+	}
 	if ctr == nil || ctr.Handle() != b.Handle || !bytes.Equal(ctr.Name(), b.Name) {
 		return counterGate{}, ErrCounter
 	}
@@ -255,9 +262,9 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 	}
 	switch {
 	case cur < ^uint64(0) && b.Bound == cur+1:
-		return counterGate{bound: true, finish: true, base: cur + 1}, nil
+		return counterGate{bound: true, finish: true, base: cur + 1, ctr: ctr}, nil
 	case b.Bound == cur, o.AcceptRollback:
-		return counterGate{bound: true, base: cur}, nil
+		return counterGate{bound: true, base: cur, ctr: ctr}, nil
 	}
 	return counterGate{}, ErrRollback
 }
@@ -268,10 +275,11 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 // #4, finding 2): otherwise this session would leave the counter equal to
 // the bound written by the crashed one, and an image copied during that
 // crashed session would still be accepted at the next mount.
-func (c *Container) bindCounter(ctr Counter, g counterGate) error {
+func (c *Container) bindCounter(g counterGate) error {
 	if !g.bound {
 		return nil
 	}
+	ctr := g.ctr
 	if g.finish {
 		if err := ctr.Increment(); err != nil {
 			return err

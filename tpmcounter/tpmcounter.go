@@ -1,0 +1,252 @@
+// Package tpmcounter is theca's rollback counter (DESIGN 5.4) on a TPM 2.0:
+// a TPM_NT_COUNTER NV index, created once per container and incremented once
+// per mount session, over go-tpm2/tpm2.
+//
+// Transports: the Linux kernel resource manager (/dev/tpmrm0), and any raw
+// TPM 2.0 stream the caller names as "unix:<socket>" (a software TPM started
+// with swtpm --server type=unixio). Windows (TBS) is not supported: go-tpm2
+// has no TBS transport. macOS has no TPM. Both return ErrUnsupported unless a
+// device is named explicitly.
+//
+// A Counter holds no open connection. Each operation opens the device and
+// closes it, so no lifetime has to be managed and the kernel resource manager
+// releases everything between operations.
+package tpmcounter
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"runtime"
+
+	"github.com/go-tpm2/devtpm"
+	"github.com/go-tpm2/tpm2"
+)
+
+// Errors.
+var (
+	// ErrUnsupported: this platform has no TPM interface and no device was named.
+	ErrUnsupported = errors.New("tpmcounter: no TPM interface on this platform (name a device with --tpm-device)")
+	// ErrNotCounter: the NV index exists but is not a theca rollback counter.
+	ErrNotCounter = errors.New("tpmcounter: the NV index is not a rollback counter created by theca")
+	// ErrAuthTooLong: an authValue longer than a SHA-256 digest (Part 3 31.3.1).
+	ErrAuthTooLong = errors.New("tpmcounter: an authValue is at most 32 bytes")
+	// ErrNoFreeHandle: every handle in the search range is taken.
+	ErrNoFreeHandle = errors.New("tpmcounter: no free NV index handle in the owner range searched")
+)
+
+// First and Span give the owner NV handles searched for a free one: the TCG
+// registry assigns 0x01500000-0x01BFFFFF to the owner.
+const (
+	First uint32 = 0x01500000
+	Span  uint32 = 0x1000
+)
+
+// DefaultLinuxDevice is the kernel resource manager.
+const DefaultLinuxDevice = devtpm.DefaultDevice
+
+// maxAuth is the digest size of the counter's nameAlg (SHA-256).
+const maxAuth = 32
+
+// rcHandle is TPM_RC_HANDLE's number in the format-one response codes
+// (0x08B): a handle that does not exist.
+const rcHandle = 0x0B
+
+// Options select the TPM and the credentials.
+type Options struct {
+	// Device is a character device path, "unix:<socket>", or empty for the
+	// platform default (/dev/tpmrm0 on Linux).
+	Device string
+	// Handle is the NV index. Create picks a free one when it is 0; Open
+	// requires it.
+	Handle uint32
+	// OwnerAuth authorizes Create and Destroy (the owner hierarchy password;
+	// empty on a TPM with no owner password). Read from a file by the caller,
+	// never from argv or the environment.
+	OwnerAuth []byte
+	// Auth is the counter's own authValue, used to increment and read it.
+	Auth []byte
+}
+
+// nvTPM is the part of *tpm2.TPM the counter uses.
+type nvTPM interface {
+	NVDefineCounter(ownerAuth, indexAuth []byte, nvIndex uint32) ([]byte, error)
+	NVReadPublic(nvIndex uint32) (tpm2.NVPublic, []byte, error)
+	NVIncrementAuth(authHandle uint32, auth []byte, nvIndex uint32) error
+	NVReadCounter(auth []byte, nvIndex uint32) (uint64, error)
+	NVUndefineSpaceAuth(ownerAuth []byte, nvIndex uint32) error
+}
+
+// goos is replaced by tests.
+var goos = runtime.GOOS
+
+// connect opens the TPM; tests replace it. The function closes the connection.
+var connect = func(device string) (nvTPM, func() error, error) {
+	if len(device) > 5 && device[:5] == "unix:" {
+		conn, err := net.Dial("unix", device[5:])
+		if err != nil {
+			return nil, nil, err
+		}
+		t := devtpm.New(conn)
+		return tpm2.New(t), t.Close, nil
+	}
+	t, err := devtpm.Open(device)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tpm2.New(t), t.Close, nil
+}
+
+func (o Options) device() (string, error) {
+	if o.Device != "" {
+		return o.Device, nil
+	}
+	if goos == "linux" {
+		return DefaultLinuxDevice, nil
+	}
+	return "", ErrUnsupported
+}
+
+func (o Options) check() error {
+	if len(o.Auth) > maxAuth || len(o.OwnerAuth) > maxAuth {
+		return ErrAuthTooLong
+	}
+	return nil
+}
+
+// with runs f on a fresh connection.
+func (o Options) with(f func(nvTPM) error) error {
+	dev, err := o.device()
+	if err != nil {
+		return err
+	}
+	t, closeFn, err := connect(dev)
+	if err != nil {
+		return err
+	}
+	err = f(t)
+	if cerr := closeFn(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// Counter implements theca.Counter over a TPM NV counter.
+type Counter struct {
+	opts   Options
+	handle uint32
+	name   []byte
+}
+
+// Create defines a new counter index and returns it. The index is not yet
+// written; theca.Create increments it and binds the value it reads. If a later
+// step fails, call Destroy.
+func Create(o Options) (*Counter, error) {
+	if err := o.check(); err != nil {
+		return nil, err
+	}
+	c := &Counter{opts: o}
+	err := o.with(func(t nvTPM) error {
+		h, err := pickHandle(t, o.Handle)
+		if err != nil {
+			return err
+		}
+		name, err := t.NVDefineCounter(o.OwnerAuth, o.Auth, h)
+		if err != nil {
+			return err
+		}
+		c.handle, c.name = h, name
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	c.opts.Handle = c.handle
+	return c, nil
+}
+
+// pickHandle returns want if it is not 0, otherwise the first free handle.
+func pickHandle(t nvTPM, want uint32) (uint32, error) {
+	if want != 0 {
+		return want, nil
+	}
+	for h := First; h < First+Span; h++ {
+		_, _, err := t.NVReadPublic(h)
+		if err == nil {
+			continue // taken
+		}
+		var te *tpm2.TPMError
+		if errors.As(err, &te) && te.RC&0x3F == rcHandle {
+			return h, nil
+		}
+		return 0, err
+	}
+	return 0, ErrNoFreeHandle
+}
+
+// Open attaches to the existing counter o.Handle and reads its Name from the
+// TPM. It refuses an index that is not a counter with the attributes Create
+// sets. (The container pins the Name too: a different index fails there.)
+func Open(o Options) (*Counter, error) {
+	if err := o.check(); err != nil {
+		return nil, err
+	}
+	c := &Counter{opts: o, handle: o.Handle}
+	err := o.with(func(t nvTPM) error {
+		pub, name, err := t.NVReadPublic(o.Handle)
+		if err != nil {
+			return err
+		}
+		if pub.Attributes&^tpm2.NVWritten != tpm2.CounterAttributes || pub.DataSize != tpm2.CounterSize {
+			return fmt.Errorf("%w (handle %#08x)", ErrNotCounter, o.Handle)
+		}
+		c.name = name
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Handle implements theca.Counter.
+func (c *Counter) Handle() uint32 { return c.handle }
+
+// Name implements theca.Counter: the NV Name the TPM computed.
+func (c *Counter) Name() []byte { return c.name }
+
+// Read implements theca.Counter.
+func (c *Counter) Read() (uint64, error) {
+	var v uint64
+	err := c.opts.with(func(t nvTPM) (err error) {
+		v, err = t.NVReadCounter(c.opts.Auth, c.handle)
+		return err
+	})
+	return v, err
+}
+
+// Increment implements theca.Counter. It then reads the Name again: the first
+// increment sets TPMA_NV_WRITTEN, which is part of the public area the Name is
+// the digest of, so the Name of a counter that was just created changes once.
+// (Measured on swtpm: a Name read before the first increment does not match
+// the one read after it.)
+func (c *Counter) Increment() error {
+	return c.opts.with(func(t nvTPM) error {
+		if err := t.NVIncrementAuth(c.handle, c.opts.Auth, c.handle); err != nil {
+			return err
+		}
+		_, name, err := t.NVReadPublic(c.handle)
+		if err == nil {
+			c.name = name
+		}
+		return err
+	})
+}
+
+// Destroy deletes the index under the owner password in the Options it was
+// created with. Use it only to undo a Create.
+func (c *Counter) Destroy() error {
+	return c.opts.with(func(t nvTPM) error {
+		return t.NVUndefineSpaceAuth(c.opts.OwnerAuth, c.handle)
+	})
+}

@@ -70,7 +70,7 @@ func enrollKeyCmd() *cobra.Command {
 				}
 				partners = append(partners, rc)
 			}
-			c, err := theca.Open(cmd.Context(), theca.FileBacking{File: f}, u, theca.OpenOptions{})
+			c, err := s.openContainer(cmd, f, u)
 			if err != nil {
 				return err
 			}
@@ -181,9 +181,11 @@ type secrets struct {
 	hint         int
 	fido         bool
 	pinFile      string
+	tpm          tpmFlags
 }
 
 func (s *secrets) flags(cmd *cobra.Command) {
+	s.tpm.flags(cmd)
 	cmd.Flags().StringVar(&s.passwordFile, "password-file", "", "read the password from this file (mode 0600 or stricter) instead of the terminal")
 	cmd.Flags().IntVar(&s.hint, "hint", 0, "Argon2id profile the password was created with: 0, 1 or 2 (DESIGN 6.1)")
 }
@@ -279,7 +281,9 @@ func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 // status, as DESIGN 5.4 requires at every mount.
 func open(cmd *cobra.Command, path string, s *secrets, write bool) (*theca.Container, *os.File, error) {
 	flag := os.O_RDONLY
-	if write {
+	// A mount under a counter rebinds the header to the counter's next value
+	// (DESIGN 5.4), so it writes, even for info or export.
+	if write || s.tpm.counter != "" {
 		flag = os.O_RDWR
 	}
 	f, err := os.OpenFile(path, flag, 0)
@@ -292,7 +296,7 @@ func open(cmd *cobra.Command, path string, s *secrets, write bool) (*theca.Conta
 		f.Close()
 		return nil, nil, err
 	}
-	c, err := theca.Open(cmd.Context(), theca.FileBacking{File: f}, u, theca.OpenOptions{})
+	c, err := s.openContainer(cmd, f, u)
 	if err != nil {
 		f.Close()
 		return nil, nil, err
@@ -396,9 +400,15 @@ func createCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ctr, undo, err := s.tpm.newCounter()
+			if err != nil {
+				f.Close()
+				os.Remove(args[0])
+				return err
+			}
 			c, code, err := theca.Create(theca.FileBacking{File: f}, theca.CreateOptions{
 				Sectors: n / theca.SectorSize, JournalEntries: journal, Hint: s.hint,
-				Password: pw, Policy: pol,
+				Password: pw, Policy: pol, Counter: ctr,
 			})
 			if err == nil {
 				if err = formatFS(c, fsKind); err != nil {
@@ -406,6 +416,7 @@ func createCmd() *cobra.Command {
 				}
 			}
 			if err != nil {
+				undo()
 				f.Close()
 				os.Remove(args[0])
 				return err
@@ -414,7 +425,11 @@ func createCmd() *cobra.Command {
 			// formatted and the code is the only copy there will ever be.
 			fmt.Fprintln(cmd.ErrOrStderr(), "Recovery code (shown once, never stored; write it down):")
 			fmt.Fprintln(cmd.OutOrStdout(), code)
-			fmt.Fprintln(cmd.ErrOrStderr(), "note: no rollback counter: an older copy of this container would be accepted")
+			if ctr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "rollback counter: TPM NV index %#08x; give --counter tpm to every command that opens this container\n", ctr.Handle())
+			} else {
+				fmt.Fprintln(cmd.ErrOrStderr(), "note: no rollback counter: an older copy of this container would be accepted")
+			}
 			return closeBoth(c, f, nil)
 		},
 	}
@@ -444,7 +459,11 @@ func infoCmd() *cobra.Command {
 			fmt.Fprintf(out, "epoch:              %d\n", i.Epoch)
 			fmt.Fprintf(out, "slots used:         %d of 16\n", i.SlotsUsed)
 			fmt.Fprintf(out, "journal entries:    %d\n", i.JournalEntries)
-			fmt.Fprintf(out, "rollback protected: %t\n", i.RollbackProtected)
+			if i.RollbackProtected {
+				fmt.Fprintf(out, "rollback protected: true (TPM NV counter %#08x: an older copy of this container is refused)\n", i.CounterHandle)
+			} else {
+				fmt.Fprintln(out, "rollback protected: false (no counter: an older copy of this container would be accepted)")
+			}
 			return closeBoth(c, f, nil)
 		},
 	}
