@@ -427,7 +427,10 @@ func TestSealOpen(t *testing.T) {
 func TestKeyCommitment(t *testing.T) {
 	// Two different keys never open one object (32-byte keys, DESIGN 9.3).
 	a, b := testKeys(t), testKeys(t)
-	blob, _ := a.Seal(LabelHeader, nil, []byte("x"), rand.Reader)
+	// 32 bytes, so that "a different Ka gives other plaintext" fails by chance
+	// with probability 2^-256, not 1/256 as a one-byte plaintext did.
+	pt := bytes.Repeat([]byte("x"), 32)
+	blob, _ := a.Seal(LabelHeader, nil, pt, rand.Reader)
 	if _, err := b.Open(LabelHeader, nil, blob); !errors.Is(err, ErrAuth) {
 		t.Fatal(err)
 	}
@@ -443,7 +446,7 @@ func TestKeyCommitment(t *testing.T) {
 	d := *a
 	d.Ka[0] ^= 1
 	got, err := d.Open(LabelHeader, nil, blob)
-	if err != nil || bytes.Equal(got, []byte("x")) {
+	if err != nil || bytes.Equal(got, pt) {
 		t.Fatalf("different Ka: err=%v, plaintext unchanged", err)
 	}
 }
