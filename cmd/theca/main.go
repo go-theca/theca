@@ -2,8 +2,10 @@
 // containers (docs/DESIGN.md). It does not mount anything.
 //
 // Secrets never travel in argv or the environment: the password and the
-// recovery code are read from the terminal with echo off, or from a file
-// that only its owner can read (--password-file, --recovery-file).
+// recovery code are read from the terminal with echo off, from a file
+// that only its owner can read (--password-file, --recovery-file), or from a
+// secret manager by reference (--password-from, --recovery-from, --pin-from:
+// keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or file:PATH).
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/go-authn/secretsource"
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/fido2"
 	"github.com/go-theca/theca/internal/format"
@@ -126,7 +129,7 @@ var (
 var readTerminal = func(cmd *cobra.Command, prompt string) ([]byte, error) {
 	fd := int(os.Stdin.Fd())
 	if !isTerminal(fd) {
-		return nil, errors.New("no terminal to ask for a secret: use --password-file or --recovery-file")
+		return nil, errors.New("no terminal to ask for a secret: use --password-file, --password-from, --recovery-file or --recovery-from")
 	}
 	fmt.Fprint(cmd.ErrOrStderr(), prompt)
 	b, err := readPassword(fd)
@@ -135,60 +138,69 @@ var readTerminal = func(cmd *cobra.Command, prompt string) ([]byte, error) {
 }
 
 // maxSecretFile bounds what a secret file may hold.
-const maxSecretFile = 4096
+const maxSecretFile = secretsource.MaxSize
+
+func openRef(ctx context.Context, ref string) ([]byte, error) {
+	s, err := secretsource.Open(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return s.Bytes(), nil
+}
+
+// readRef resolves a secretsource reference (file:, keychain:,
+// secretservice:); the bytes are the caller's to wipe. Tests replace it.
+var readRef = openRef
 
 // readSecretFile reads a secret from a regular file that its owner alone
 // can read or write, and strips one trailing newline.
 func readSecretFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	// Checked on the open descriptor, not the path, so the file cannot be
-	// swapped between the check and the read.
-	st, err := f.Stat()
-	if err == nil && !st.Mode().IsRegular() {
-		err = fmt.Errorf("%s: not a regular file", path)
-	}
-	if err == nil && st.Mode().Perm()&0o077 != 0 {
-		err = fmt.Errorf("%s: mode %04o, must not be readable or writable by group or others", path, st.Mode().Perm())
-	}
-	if err != nil {
-		return nil, err
-	}
-	b, err := io.ReadAll(io.LimitReader(f, maxSecretFile+1))
-	if err == nil && len(b) > maxSecretFile {
-		err = fmt.Errorf("%s: longer than %d bytes", path, maxSecretFile)
-	}
-	if err != nil {
-		clear(b)
-		return nil, err
-	}
-	n := len(b)
-	if n > 0 && b[n-1] == '\n' {
-		n--
-		if n > 0 && b[n-1] == '\r' {
-			n--
-		}
-	}
-	return b[:n], nil
+	return openRef(context.Background(), "file:"+path)
 }
 
 // secrets holds the flags shared by every command that opens a container.
+// Each secret has a file flag and a manager flag (--X-from), exclusive.
 type secrets struct {
 	passwordFile string
+	passwordFrom string
 	recoveryFile string
+	recoveryFrom string
 	hint         int
 	fido         bool
 	pinFile      string
+	pinFrom      string
 	device       string
 	tpm          tpmFlags
+}
+
+// fromHelp is the common tail of the --X-from help texts.
+const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or file:PATH"
+
+// passwordGiven reports whether the password comes from a file or a manager.
+func (s *secrets) passwordGiven() bool { return s.passwordFile != "" || s.passwordFrom != "" }
+
+// recoveryGiven reports whether the recovery code comes from a file or a manager.
+func (s *secrets) recoveryGiven() bool { return s.recoveryFile != "" || s.recoveryFrom != "" }
+
+// source reads a secret from a file or a reference; ok is false when neither
+// was given.
+func (s *secrets) source(cmd *cobra.Command, file, from string) (b []byte, ok bool, err error) {
+	switch {
+	case from != "":
+		b, err = readRef(cmd.Context(), from)
+		return b, true, err
+	case file != "":
+		b, err = readSecretFile(file)
+		return b, true, err
+	}
+	return nil, false, nil
 }
 
 func (s *secrets) flags(cmd *cobra.Command) {
 	s.tpm.flags(cmd)
 	cmd.Flags().StringVar(&s.passwordFile, "password-file", "", "read the password from this file (mode 0600 or stricter) instead of the terminal")
+	cmd.Flags().StringVar(&s.passwordFrom, "password-from", "", "read the password"+fromHelp)
+	cmd.MarkFlagsMutuallyExclusive("password-file", "password-from")
 	cmd.Flags().IntVar(&s.hint, "hint", 0, "Argon2id profile the password was created with: 0, 1 or 2 (DESIGN 6.1)")
 }
 
@@ -201,6 +213,8 @@ func (s *secrets) unlockFlags(cmd *cobra.Command) {
 
 func (s *secrets) recoveryFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.recoveryFile, "recovery-file", "", "also present the recovery code read from this file (mode 0600 or stricter)")
+	cmd.Flags().StringVar(&s.recoveryFrom, "recovery-from", "", "also present the recovery code read"+fromHelp)
+	cmd.MarkFlagsMutuallyExclusive("recovery-file", "recovery-from")
 }
 
 // pinFlag adds the flags of the security-key commands: the PIN source and
@@ -209,17 +223,16 @@ func (s *secrets) recoveryFlag(cmd *cobra.Command) {
 func (s *secrets) pinFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.device, "device", "", "use the security key with this id (`fido list` prints them); with several attached and none named, touch the one to use")
 	cmd.Flags().StringVar(&s.pinFile, "pin-file", "", "read the security key's PIN from this file (mode 0600 or stricter) instead of the terminal; unused by a key with a fingerprint")
+	cmd.Flags().StringVar(&s.pinFrom, "pin-from", "", "read the security key's PIN"+fromHelp+"; unused by a key with a fingerprint")
+	cmd.MarkFlagsMutuallyExclusive("pin-file", "pin-from")
 }
 
 // keyPIN returns the function the key asks for its PIN through, only when
 // it has no built-in verification.
 func (s *secrets) keyPIN(cmd *cobra.Command) func() (string, error) {
 	return func() (string, error) {
-		var b []byte
-		var err error
-		if s.pinFile != "" {
-			b, err = readSecretFile(s.pinFile)
-		} else {
+		b, ok, err := s.source(cmd, s.pinFile, s.pinFrom)
+		if !ok {
 			b, err = readTerminal(cmd, "Security key PIN: ")
 		}
 		pin := string(b)
@@ -247,8 +260,8 @@ var openFIDO = func(ctx context.Context, pin func() (string, error), device stri
 func printNotice(m string) { fmt.Fprintln(os.Stderr, m) }
 
 func (s *secrets) password(cmd *cobra.Command, prompt string) ([]byte, error) {
-	if s.passwordFile != "" {
-		return readSecretFile(s.passwordFile)
+	if b, ok, err := s.source(cmd, s.passwordFile, s.passwordFrom); ok {
+		return b, err
 	}
 	return readTerminal(cmd, prompt)
 }
@@ -272,15 +285,14 @@ func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 		u.FIDO = dev
 		fmt.Fprintln(cmd.ErrOrStderr(), "Touch the security key when it blinks.")
 	}
-	if s.recoveryFile != "" {
-		rc, err := readSecretFile(s.recoveryFile)
+	if rc, ok, err := s.source(cmd, s.recoveryFile, s.recoveryFrom); ok {
 		if err != nil {
 			return u, wipe, err
 		}
 		u.Recovery = string(rc)
 		clear(rc)
 	}
-	if s.passwordFile != "" || s.recoveryFile == "" {
+	if s.passwordGiven() || !s.recoveryGiven() {
 		pw, err := s.password(cmd, "Password: ")
 		if err != nil {
 			return u, wipe, err
@@ -398,7 +410,7 @@ func createCmd() *cobra.Command {
 				return err
 			}
 			defer clear(pw)
-			if s.passwordFile == "" {
+			if !s.passwordGiven() {
 				again, err := readTerminal(cmd, "Repeat password: ")
 				if err != nil {
 					return err
@@ -545,8 +557,8 @@ func importCmd() *cobra.Command {
 			"atomic transaction: on any error, the bytes written before it are kept.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if s.passwordFile == "" && s.recoveryFile == "" {
-				return errors.New("import reads the data from standard input: give --password-file or --recovery-file")
+			if !s.passwordGiven() && !s.recoveryGiven() {
+				return errors.New("import reads the data from standard input: give --password-file, --password-from, --recovery-file or --recovery-from")
 			}
 			c, f, err := open(cmd, args[0], &s, true)
 			if err != nil {

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.12.0
+
+- Secrets from a secret manager instead of a plaintext file: `--password-from`,
+  `--recovery-from` and `--pin-from` on every command that took the matching
+  `-file` flag. The value is a reference (`keychain:SERVICE/ACCOUNT`,
+  `secretservice:SERVICE/ACCOUNT`, `file:PATH`) resolved by
+  github.com/go-authn/secretsource v0.1.0; there is no scheme that runs a
+  command. Each is exclusive with its `-file` flag, which is unchanged (and now
+  shares the same reader). `create --password-from` does not ask the password
+  twice. The terminal-less error and the `import` hint name the new flags.
+
 ## v0.11.0
 
 - FIDO2: choose the key. With several keys attached theca took whichever the

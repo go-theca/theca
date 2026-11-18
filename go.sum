@@ -14,6 +14,8 @@ github.com/geoffgarside/ber v1.1.0 h1:qTmFG4jJbwiSzSXoNJeHcOprVzZ8Ulde2Rrrifu5U9
 github.com/geoffgarside/ber v1.1.0/go.mod h1:jVPKeCbj6MvQZhwLYsGwaGI52oUorHoHKNecGT85ZCc=
 github.com/go-authn/fido v0.11.0 h1:GTPNwIdZsrPQieHL8/keHzkuKUM4TZHTICDNvX4RaLM=
 github.com/go-authn/fido v0.11.0/go.mod h1:EnseUqvvwzHnj7W6occN/5ySFfofWdJHJqcE2UHDDaA=
+github.com/go-authn/secretsource v0.1.0 h1:cFO72GZzK4BSvNcJccPkUkupVEcTfprYJYV9jlgewv0=
+github.com/go-authn/secretsource v0.1.0/go.mod h1:9tBP8jIgWOMcbv0lkKPS+183wZkyCjpAbma5kan1h7o=
 github.com/go-encryptions/argon2 v0.1.0 h1:yBY2J+iy8ySMwnAFe4phqx9horyqzbWu2VuPOtpLDwk=
 github.com/go-encryptions/argon2 v0.1.0/go.mod h1:Ow9whh1fllz67dc33JWcDIklhBhAObqll0gBMFTSKeg=
 github.com/go-encryptions/ctr v0.1.1 h1:UAvH45xiG9ifBTt4mE5PNrHWnTY5kBVZ4OyThBPr/94=
@@ -36,12 +38,16 @@ github.com/go-fleettools/fleettools v0.81.0 h1:UnMflmNw5b82Z+7Ums7UVaW5RrGuACCVm
 github.com/go-fleettools/fleettools v0.81.0/go.mod h1:y/o3p2HZAvto9J5G5gtPxhN45zgvaYFAXCY9RCK/lQw=
 github.com/go-freedesktop/gvfs v0.1.1 h1:mzp3qJq9qucK3eFeJMLuImpbXlS/cgxP41wnHBEIcpc=
 github.com/go-freedesktop/gvfs v0.1.1/go.mod h1:/2thANqVEah4mNw2WYi9oSTwjI2+GBLpxcXyikC+Ers=
+github.com/go-freedesktop/secretservice v0.2.0 h1:0dGEmwZUgv2OYgyZfTrWEa3lW6UTU7UGexasvvOVh1A=
+github.com/go-freedesktop/secretservice v0.2.0/go.mod h1:fMp0iq3TC6eRl2Y/f2J6mIKYExtaDi6peuINZ5zevsw=
 github.com/go-gnulinux/fido v0.6.0 h1:NPCWE86c8dCIcgwNjOzdYfLCBJhoYVScD0USEG47LKY=
 github.com/go-gnulinux/fido v0.6.0/go.mod h1:2nT6jlb8LMIeG9EvHeOFlPHUxRZ0VC0BuzhngTSEd7s=
 github.com/go-macos/fido v0.6.0 h1:3bfihY1zypIBklx/2vPp3uJaZPxW/QKvoxXNftKZ2ns=
 github.com/go-macos/fido v0.6.0/go.mod h1:I081MVe219gWihfEKeJ/7OVCaZtSYgjQ1nkUHyuGRvg=
 github.com/go-macos/iokit v0.14.0 h1:TVwBDbHSvCoJ+LgLQODLcTAJmwebDmf0bZ9LDsOvXZ0=
 github.com/go-macos/iokit v0.14.0/go.mod h1:mICeLNCQgXiQ5LOqhTD948UbTRqkoO0GdRn1hN9rnPc=
+github.com/go-macos/keychain v0.3.1 h1:pH/sxiVCTqj2rafKiWsufWKrRlHZ7YRNiePgrMieRQs=
+github.com/go-macos/keychain v0.3.1/go.mod h1:R+xl/40QhjhgzncuCdZLe/fRvg9UEeOIvOzMxtymHs4=
 github.com/go-macos/netfs v0.1.0 h1:2ZxuEmgVPIjEqwIOdkv/j23w03QzpGToxUizmLy9mz8=
 github.com/go-macos/netfs v0.1.0/go.mod h1:xk8N/niL/KKIEPV0XSVe1on92Drr1wBAXwtkOt+alCQ=
 github.com/go-macos/objc v0.12.0 h1:/WmB4C1CQd5RkqBRvnHNljEFtOTvytPA9fkD87xuJVQ=
