@@ -161,6 +161,11 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
   The key is touched twice: to register, then to confirm.
 - `--fido2` adds the attached key to an unlock. It pairs with the password
   or the recovery code. The key is never a factor alone.
+- **Naming a key.** `fido name set "desk key"` (go-authn/fido `cmd/fido`) stores
+  a name ON the key; theca reads it with no touch and no PIN, shows the key by
+  that name, and `--device "desk key"` finds it wherever it is plugged (exactly;
+  a name on two keys is refused). A key that will not answer that read is chosen
+  by id.
 - **Which key.** With one key attached, that key is used. With several, theca
   never takes "the first": `--device ID` names one (the ids are what
   `fido list` from [go-authn/fido](https://github.com/go-authn/fido) prints:

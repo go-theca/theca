@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.13.0
+
+- FIDO2: a key can be named, and `--device` takes the name. A name stored ON the
+  key (`fido name set NAME` from go-authn/fido `cmd/fido` v0.4.0; go-authn/fido
+  v0.12.0) is read with no touch and no PIN, so `--device NAME` finds the key
+  wherever it is plugged, and the key is shown by its name when theca names it
+  (`Using security key: ... "desk key"`, and in `enroll-key`'s `ok:` line). A
+  name must be on exactly one key; on two, theca refuses and names both. A key
+  that will not answer the silent read has no name here and is chosen by its
+  `--device` id. Not run against a real key.
+
 ## v0.12.0
 
 - Secrets from a secret manager instead of a plaintext file: `--password-from`,

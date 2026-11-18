@@ -119,28 +119,17 @@ func openTransport(ctx context.Context, c *config) (key, string, error) {
 		}
 	}
 	if c.device != "" || len(devs) == 1 {
-		d := devs[0]
+		d, k := devs[0], (*authn.Key)(nil)
 		if c.device != "" {
-			found := false
-			for _, x := range devs {
-				if x.ID == c.device {
-					d, found = x, true
-				}
+			if d, k, err = findKey(ctx, devs, c.device); err != nil {
+				return nil, "", err
 			}
-			if !found {
-				var ids []string
-				for _, x := range devs {
-					ids = append(ids, x.ID)
-				}
-				return nil, "", fmt.Errorf("fido2: no attached key has the id %q (attached: %s); `fido list` shows them", c.device, strings.Join(ids, ", "))
-			}
-		}
-		k, err := d.open(ctx)
-		if err != nil {
+		} else if k, err = d.open(ctx); err != nil {
 			return nil, "", err
 		}
-		say("Using security key: " + d.Label)
-		return k, d.Label, nil
+		label := nameLabel(ctx, k, d.Label)
+		say("Using security key: " + label)
+		return k, label, nil
 	}
 
 	var b strings.Builder
@@ -148,7 +137,7 @@ func openTransport(ctx context.Context, c *config) (key, string, error) {
 	for _, d := range devs {
 		b.WriteString("\n  " + d.Label)
 	}
-	fmt.Fprintf(&b, "\nTouch the key to use (%s), or pass --device ID.", selectTimeout)
+	fmt.Fprintf(&b, "\nTouch the key to use (%s), or pass --device ID or NAME.", selectTimeout)
 	say(b.String())
 	sctx, stop := context.WithTimeout(ctx, selectTimeout)
 	defer stop()
@@ -161,6 +150,63 @@ func openTransport(ctx context.Context, c *config) (key, string, error) {
 		return nil, "", fmt.Errorf("fido2: %s and %s were touched at the same time; touch ONE key, or pass --device ID",
 			sel.Label, strings.Join(sel.AlsoTouched, ", "))
 	}
-	say("Using security key: " + sel.Label)
-	return sel.Key, sel.Label, nil
+	label := nameLabel(ctx, sel.Key, sel.Label)
+	say("Using security key: " + label)
+	return sel.Key, label, nil
+}
+
+// nameLabel adds the key's name, when it has one and answers the silent read
+// (no touch, no PIN: go-authn/fido ReadName), so the key is shown by the name
+// its owner gave it.
+func nameLabel(ctx context.Context, k *authn.Key, label string) string {
+	if name, err := k.ReadName(ctx); err == nil {
+		return fmt.Sprintf("%s %q", label, name)
+	}
+	return label
+}
+
+// findKey opens the key --device names: the one with that ID, matched exactly
+// (a prefix or a position could name another key after a replug), else the one
+// whose NAME it is. A name on two keys is refused, naming both. Names are the
+// ones stored on the keys; a key that will not answer the silent read has none
+// here, and is named by its ID.
+func findKey(ctx context.Context, devs []keyDevice, want string) (keyDevice, *authn.Key, error) {
+	for _, d := range devs {
+		if d.ID == want {
+			k, err := d.open(ctx)
+			return d, k, err
+		}
+	}
+	type match struct {
+		d keyDevice
+		k *authn.Key
+	}
+	var found []match
+	for _, d := range devs {
+		k, err := d.open(ctx)
+		if err != nil {
+			continue // a key that will not open cannot be shown to have the name
+		}
+		if name, err := k.ReadName(ctx); err == nil && name == want {
+			found = append(found, match{d, k})
+			continue
+		}
+		k.Close()
+	}
+	switch len(found) {
+	case 1:
+		return found[0].d, found[0].k, nil
+	case 0:
+		var ids []string
+		for _, d := range devs {
+			ids = append(ids, d.ID)
+		}
+		return keyDevice{}, nil, fmt.Errorf("fido2: no attached key has the id or name %q (attached: %s); `fido list` shows them", want, strings.Join(ids, ", "))
+	}
+	var labels []string
+	for _, m := range found {
+		m.k.Close()
+		labels = append(labels, m.d.Label)
+	}
+	return keyDevice{}, nil, fmt.Errorf("fido2: the name %q is on %d keys (%s): name them differently, or pass --device with an id", want, len(found), strings.Join(labels, "; "))
 }
