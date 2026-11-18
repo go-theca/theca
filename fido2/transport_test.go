@@ -258,7 +258,9 @@ func TestSeveralKeysAndNoDeviceMeansTouchToChoose(t *testing.T) {
 		t.Errorf("none touched: %v", err)
 	}
 
-	// Two keys touched together: refused, never one picked silently.
+	// Two keys touched together: refused, never one picked silently. (Fresh
+	// keys: the ones above still hold replies from the real Select.)
+	withKeys(t, []keyDevice{newAnswerKey("Alpha").dev("id:a"), newAnswerKey("Beta").dev("id:b")}, nil)
 	chooseKey = func(ctx context.Context, devs []keyDevice) (*authn.Selected, error) {
 		k, err := devs[0].open(ctx)
 		return &authn.Selected{Label: devs[0].Label, Key: k, AlsoTouched: []string{devs[1].Label}}, err
