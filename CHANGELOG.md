@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.14.0
+
+- `--password-from`, `--recovery-from` and `--pin-from` also take
+  `keepassxc:by-uuid/HEX`, `keepassxc:by-path/Group/Title` and `keepassxc:URL`
+  (KeePassXC's browser-integration protocol; macOS and Linux, one association
+  approved in KeePassXC with `secretsource keepassxc associate`) and
+  `secretservice:KEY=VALUE[,...]`, through github.com/go-authn/secretsource v0.2.0.
+
 ## v0.13.0
 
 - FIDO2: a key can be named, and `--device` takes the name. A name stored ON the
