@@ -36,9 +36,11 @@ theca export vault.theca --password-file pw > disk.img
   a reference: `keychain:SERVICE/ACCOUNT` (macOS Keychain),
   `secretservice:SERVICE/ACCOUNT` or `secretservice:KEY=VALUE,...` (GNOME
   Keyring, KWallet, KeePassXC with *Secret Service Integration*),
-  `keepassxc:by-path/Group/Title` (KeePassXC itself, on macOS and Linux, through
-  its browser-integration socket: enable it, run
-  `secretsource keepassxc associate` once and approve it in KeePassXC) or `file:PATH`. A reference holds no secret, and
+  `keepassxc:URL` (KeePassXC itself, on macOS and Linux, through its
+  browser-integration socket; the reference is the URL field of the entry: enable
+  it, run `secretsource keepassxc associate` once and approve it in KeePassXC.
+  Lookups by UUID or path are refused: KeePassXC 2.8.0 crashes on an entry without
+  a URL) or `file:PATH`. A reference holds no secret, and
   no scheme runs a command. Each excludes the `-file` flag of the same secret.
   See [go-authn/secretsource](https://github.com/go-authn/secretsource).
 
@@ -46,7 +48,7 @@ theca export vault.theca --password-file pw > disk.img
   security add-generic-password -s theca -a vault -w          # macOS: asks for the password
   theca info vault.theca --password-from keychain:theca/vault
   theca info vault.theca --fido2 --password-from secretservice:theca/vault --pin-from secretservice:fido/yubikey-5c
-  theca info vault.theca --fido2 --password-from 'keepassxc:by-path/Theca vault' --pin-from 'keepassxc:by-path/Yubikey PIN'
+  theca info vault.theca --fido2 --password-from 'keepassxc:https://theca.invalid/vault' --pin-from 'keepassxc:https://fido.invalid/yubikey-5c'
   ```
 - `create` prints the recovery code once, on standard output. It is never
   stored. If you redirect it to a file, that file gets your umask (often

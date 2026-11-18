@@ -6,7 +6,7 @@ require (
 	github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-authn/fido v0.12.0
-	github.com/go-authn/secretsource v0.2.0
+	github.com/go-authn/secretsource v0.3.0
 	github.com/go-encryptions/argon2 v0.1.0
 	github.com/go-encryptions/ctr v0.1.1
 	github.com/go-fileshare/automount v0.1.1

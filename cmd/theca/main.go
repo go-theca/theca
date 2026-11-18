@@ -6,7 +6,7 @@
 // that only its owner can read (--password-file, --recovery-file), or from a
 // secret manager by reference (--password-from, --recovery-from, --pin-from:
 // keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT,
-// keepassxc:by-path/Group/Title or file:PATH).
+// keepassxc:URL or file:PATH).
 package main
 
 import (
@@ -175,7 +175,7 @@ type secrets struct {
 }
 
 // fromHelp is the common tail of the --X-from help texts.
-const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT, keepassxc:by-path/Group/Title or file:PATH"
+const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT, keepassxc:URL (the entry's URL field) or file:PATH"
 
 // passwordGiven reports whether the password comes from a file or a manager.
 func (s *secrets) passwordGiven() bool { return s.passwordFile != "" || s.passwordFrom != "" }
