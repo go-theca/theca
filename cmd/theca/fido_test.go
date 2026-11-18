@@ -19,6 +19,7 @@ type cliKey struct {
 	creds   [][]byte
 	pin     func() (string, error)
 	pins    []string
+	device  string // what --device asked for
 	closed  int
 	failErr error
 }
@@ -67,11 +68,14 @@ func (k *cliKey) Derive(_ context.Context, salts [][32]byte) ([][][]byte, error)
 
 func (k *cliKey) Close() error { k.closed++; return nil }
 
+// Label names the key as the real one does: product, then the id it was chosen by.
+func (k *cliKey) Label() string { return "Test Key (" + k.device + ")" }
+
 // TestTheRealOpenerIsReached: the default opener goes to the fido2 package.
 // With no key attached it fails; with one attached and no PIN function it
 // is refused as unusable before any touch is asked. Either way, no gesture.
 func TestTheRealOpenerIsReached(t *testing.T) {
-	if dev, err := openFIDO(context.Background(), nil); err == nil {
+	if dev, err := openFIDO(context.Background(), nil, ""); err == nil {
 		dev.Close()
 		t.Fatal("a key with no way to ask for its PIN was accepted")
 	}
@@ -82,12 +86,40 @@ func withKey(t *testing.T, k *cliKey, err error) {
 	t.Helper()
 	saved := openFIDO
 	t.Cleanup(func() { openFIDO = saved })
-	openFIDO = func(_ context.Context, pin func() (string, error)) (fidoDevice, error) {
+	openFIDO = func(_ context.Context, pin func() (string, error), device string) (fidoDevice, error) {
 		if err != nil {
 			return nil, err
 		}
 		k.pin = pin
+		k.device = device
 		return k, nil
+	}
+}
+
+func TestTheKeyIsChosenAndNamed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c")
+	pw := secretFile(t, dir, "pw", "correct horse", 0o600)
+	if r := run(nil, "create", path, "--size", "64K", "--password-file", pw); r.e != nil {
+		t.Fatal(r.e, r.err)
+	}
+	pinFile := secretFile(t, dir, "pin", "123456\n", 0o600)
+	k := &cliKey{}
+	withKey(t, k, nil)
+	// enroll-key passes --device through and names the key it paired.
+	r := run(nil, "enroll-key", path, "--password-file", pw, "--pin-file", pinFile, "--device", "iokit:123")
+	if r.e != nil || k.device != "iokit:123" || !strings.Contains(r.out, "the key Test Key (iokit:123) is paired") {
+		t.Fatalf("%v device=%q %q", r.e, k.device, r.out)
+	}
+	// So does every --fido2 command; with no flag the device is empty (the
+	// key layer then uses the only key, or has the person touch one).
+	k.device = "unset"
+	if r := run(nil, "info", path, "--password-file", pw, "--fido2", "--pin-file", pinFile, "--device", "usb-0000:00:14.0-3/input0"); r.e != nil || k.device != "usb-0000:00:14.0-3/input0" {
+		t.Fatalf("%v device=%q", r.e, k.device)
+	}
+	k.device = "unset"
+	if r := run(nil, "info", path, "--password-file", pw, "--fido2", "--pin-file", pinFile); r.e != nil || k.device != "" {
+		t.Fatalf("%v device=%q", r.e, k.device)
 	}
 }
 

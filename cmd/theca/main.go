@@ -74,12 +74,13 @@ func enrollKeyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dev, err := openFIDO(cmd.Context(), s.keyPIN(cmd))
+			dev, err := openFIDO(cmd.Context(), s.keyPIN(cmd), s.device)
 			if err != nil {
 				c.Close()
 				return err
 			}
 			defer dev.Close()
+			label := dev.Label()
 			fmt.Fprintln(cmd.ErrOrStderr(), "Touch the security key twice when it blinks: to register it, then to confirm.")
 			err = c.EnrollFIDO2(cmd.Context(), dev, partners...)
 			if cerr := c.Close(); err == nil {
@@ -88,7 +89,7 @@ func enrollKeyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "ok: the key is paired with %d factor(s)\n", len(partners))
+			fmt.Fprintf(cmd.OutOrStdout(), "ok: the key %s is paired with %d factor(s)\n", label, len(partners))
 			return nil
 		},
 	}
@@ -181,6 +182,7 @@ type secrets struct {
 	hint         int
 	fido         bool
 	pinFile      string
+	device       string
 	tpm          tpmFlags
 }
 
@@ -201,7 +203,11 @@ func (s *secrets) recoveryFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.recoveryFile, "recovery-file", "", "also present the recovery code read from this file (mode 0600 or stricter)")
 }
 
+// pinFlag adds the flags of the security-key commands: the PIN source and
+// which key (--device), because with several keys attached the first is not a
+// choice.
 func (s *secrets) pinFlag(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&s.device, "device", "", "use the security key with this id (`fido list` prints them); with several attached and none named, touch the one to use")
 	cmd.Flags().StringVar(&s.pinFile, "pin-file", "", "read the security key's PIN from this file (mode 0600 or stricter) instead of the terminal; unused by a key with a fingerprint")
 }
 
@@ -226,11 +232,14 @@ func (s *secrets) keyPIN(cmd *cobra.Command) func() (string, error) {
 type fidoDevice interface {
 	theca.FIDO2
 	Close() error
+	// Label names the key (product, id, serial) for a person.
+	Label() string
 }
 
-// openFIDO opens the attached security key; tests replace it.
-var openFIDO = func(ctx context.Context, pin func() (string, error)) (fidoDevice, error) {
-	return fido2.Open(ctx, pin, fido2.WithNotice(printNotice))
+// openFIDO opens the security key the device ID names (or the one touched,
+// among several); tests replace it.
+var openFIDO = func(ctx context.Context, pin func() (string, error), device string) (fidoDevice, error) {
+	return fido2.Open(ctx, pin, fido2.WithNotice(printNotice), fido2.WithDevice(device))
 }
 
 // printNotice shows what the key layer does on the person's behalf (a
@@ -257,7 +266,7 @@ func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 	}
 	if s.fido {
 		var err error
-		if dev, err = openFIDO(cmd.Context(), s.keyPIN(cmd)); err != nil {
+		if dev, err = openFIDO(cmd.Context(), s.keyPIN(cmd), s.device); err != nil {
 			return u, wipe, err
 		}
 		u.FIDO = dev

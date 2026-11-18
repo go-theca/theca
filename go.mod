@@ -4,14 +4,15 @@ go 1.27.4
 
 require (
 	github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8
-	github.com/go-authn/fido v0.9.0
+	github.com/fxamacker/cbor/v2 v2.10.0
+	github.com/go-authn/fido v0.11.0
 	github.com/go-encryptions/argon2 v0.1.0
 	github.com/go-encryptions/ctr v0.1.1
 	github.com/go-fileshare/automount v0.1.1
 	github.com/go-filesystems/exfat v0.7.0
 	github.com/go-filesystems/smb v0.16.1
-	github.com/go-gnulinux/fido v0.5.1
-	github.com/go-macos/fido v0.5.2
+	github.com/go-gnulinux/fido v0.6.0
+	github.com/go-macos/fido v0.6.0
 	github.com/go-mswin/webauthn v0.5.0
 	github.com/go-scikit/refbench v0.3.0
 	github.com/go-tpm2/devtpm v0.3.0
@@ -24,7 +25,6 @@ require (
 require (
 	github.com/cloudsoda/sddl v0.0.0-20261105185302-1c8f96799263 // indirect
 	github.com/ebitengine/purego v0.11.3 // indirect
-	github.com/fxamacker/cbor/v2 v2.10.0 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/go-filesystems/hostcopy v0.1.0 // indirect
 	github.com/go-filesystems/inflight v0.2.0 // indirect

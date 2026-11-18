@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.11.0
+
+- FIDO2: choose the key. With several keys attached theca took whichever the
+  transport listed first, which can be the wrong key to enrol on. `--device ID`
+  on `enroll-key` and every `--fido2` command names one (macOS
+  `iokit:<location>`, Linux the USB port); with several attached and none named,
+  the person touches the one to use (go-authn/fido v0.11.0 `Select`), two keys
+  touched together are refused, and the key is named before anything is asked of
+  it. `enroll-key` prints which key it paired. `fido2.WithDevice`,
+  `fido2.Device.Label`, `fido2.ErrNoKey`. Windows chooses in its own dialog and
+  refuses `--device`. go-macos/fido v0.6.0, go-gnulinux/fido v0.6.0. Tested with
+  answering fake keys; not run against two real keys.
+
 ## v0.10.3
 
 - FIDO2: a key whose fingerprint fails falls back to its PIN. Built-in

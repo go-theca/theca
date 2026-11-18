@@ -42,3 +42,5 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `tpmcounter.Counter.Handle`: returns a stored integer.
 - `tpmcounter.Counter.Name`: returns a stored slice.
 - `fido2.WithNotice`: stores one function pointer in an option.
+- `fido2.WithDevice`: stores one string in an option.
+- `fido2.Device.Label`: returns a stored string.

@@ -148,6 +148,15 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
   The key is touched twice: to register, then to confirm.
 - `--fido2` adds the attached key to an unlock. It pairs with the password
   or the recovery code. The key is never a factor alone.
+- **Which key.** With one key attached, that key is used. With several, theca
+  never takes "the first": `--device ID` names one (the ids are what
+  `fido list` from [go-authn/fido](https://github.com/go-authn/fido) prints:
+  `iokit:<location>` on macOS, the USB port on Linux), and without it you touch
+  the key to use (CTAP 2.1 authenticatorSelection) within 30 seconds. Two keys
+  touched together are refused. The key is named on stderr before anything is
+  asked of it, and `enroll-key` says which key it paired
+  (`ok: the key YubiKey Bio (…) is paired with 2 factor(s)`). On Windows the
+  system dialog chooses, and `--device` is refused.
 - Nothing about the key is written into the container but its pairwise
   slots. The key is asked once per unlock, for all its Theca credentials (one
   touch).
