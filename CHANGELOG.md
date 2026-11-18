@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.15.0
+
+- Fix: `--*-from keepassxc:by-uuid/...` and `keepassxc:by-path/...` (v0.14.0)
+  crashed KeePassXC 2.8.0 when the entry had no URL. They are refused now;
+  `keepassxc:URL` (the entry's URL field) is the form. go-authn/secretsource v0.3.0.
+
 ## v0.14.0
 
 - `--password-from`, `--recovery-from` and `--pin-from` also take
