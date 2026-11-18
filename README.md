@@ -31,6 +31,19 @@ theca export vault.theca --password-file pw > disk.img
   read from the terminal with echo off, or from `--password-file`. The recovery
   code is read from `--recovery-file`. Both files must be regular files that
   only their owner can read (mode `0600` or stricter); anything else is refused.
+- **Or from a secret manager, so no plaintext file sits on disk.**
+  `--password-from`, `--recovery-from` and `--pin-from` (the FIDO2 key's PIN) take
+  a reference: `keychain:SERVICE/ACCOUNT` (macOS Keychain),
+  `secretservice:SERVICE/ACCOUNT` (GNOME Keyring, KWallet, KeePassXC with
+  *Secret Service Integration*) or `file:PATH`. A reference holds no secret, and
+  no scheme runs a command. Each excludes the `-file` flag of the same secret.
+  See [go-authn/secretsource](https://github.com/go-authn/secretsource).
+
+  ```sh
+  security add-generic-password -s theca -a vault -w          # macOS: asks for the password
+  theca info vault.theca --password-from keychain:theca/vault
+  theca info vault.theca --fido2 --password-from secretservice:theca/vault --pin-from secretservice:fido/yubikey-5c
+  ```
 - `create` prints the recovery code once, on standard output. It is never
   stored. If you redirect it to a file, that file gets your umask (often
   `0644`): restrict it, or better, write the code down on paper.
@@ -38,8 +51,8 @@ theca export vault.theca --password-file pw > disk.img
   alone, opens the container.
 - `--policy 2of3`: two of the three factors are needed. Password and recovery
   code from the start; a FIDO2 key (`enroll-key`) then pairs with each.
-- `import` reads its data from standard input, so it needs `--password-file`
-  or `--recovery-file`. It is not one atomic transaction: on an error, the bytes
+- `import` reads its data from standard input, so it needs `--password-file`,
+  `--password-from`, `--recovery-file` or `--recovery-from`. It is not one atomic transaction: on an error, the bytes
   written before the error are kept.
 - Every command that opens a container states whether it is protected against
   rollback. Without `--counter tpm` it is not: an older copy of the container
