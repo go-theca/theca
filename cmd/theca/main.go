@@ -153,6 +153,12 @@ func openRef(ctx context.Context, ref string) ([]byte, error) {
 // secretservice:); the bytes are the caller's to wipe. Tests replace it.
 var readRef = openRef
 
+// The write side of the same references, replaceable by tests.
+var (
+	storeSecret    = secretsource.Store
+	generateSecret = secretsource.Generate
+)
+
 // readSecretFile reads a secret from a regular file that its owner alone
 // can read or write, and strips one trailing newline.
 func readSecretFile(path string) ([]byte, error) {
@@ -333,6 +339,15 @@ func open(cmd *cobra.Command, path string, s *secrets, write bool) (*theca.Conta
 	return c, f, nil
 }
 
+// withStored says, when create fails after --password-to stored the password,
+// that the stored password belongs to no container.
+func withStored(err error, passwordTo string) error {
+	if passwordTo == "" {
+		return err
+	}
+	return fmt.Errorf("%w (the password stays stored in %s, for no container; use --replace to overwrite it next time)", err, passwordTo)
+}
+
 func closeBoth(c *theca.Container, f *os.File, err error) error {
 	if cerr := c.Close(); err == nil {
 		err = cerr
@@ -380,11 +395,13 @@ func RootCmd() *cobra.Command {
 
 func createCmd() *cobra.Command {
 	var s secrets
-	var size, policy, fsKind string
+	var size, policy, fsKind, passwordTo, recoveryTo string
 	var journal uint32
+	var generate int
+	var replace bool
 	cmd := &cobra.Command{
 		Use:   "create FILE",
-		Short: "Create a new container; prints the recovery code once",
+		Short: "Create a new container; prints the recovery code once (or stores it with --recovery-to)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if fsKind != "" && fsKind != "exfat" {
@@ -406,12 +423,21 @@ func createCmd() *cobra.Command {
 			default:
 				return fmt.Errorf("--policy %q: want any or 2of3", policy)
 			}
-			pw, err := s.password(cmd, "New password: ")
+			gen := cmd.Flags().Changed("generate")
+			if gen && passwordTo == "" {
+				return errors.New("--generate needs --password-to: a password nobody could read back would lock the container forever")
+			}
+			var pw []byte
+			if gen {
+				pw, err = generateSecret(generate)
+			} else {
+				pw, err = s.password(cmd, "New password: ")
+			}
 			if err != nil {
 				return err
 			}
 			defer clear(pw)
-			if !s.passwordGiven() {
+			if !s.passwordGiven() && !gen {
 				again, err := readTerminal(cmd, "Repeat password: ")
 				if err != nil {
 					return err
@@ -422,15 +448,24 @@ func createCmd() *cobra.Command {
 					return errors.New("the passwords differ")
 				}
 			}
+			// The password is stored BEFORE the container exists: when the
+			// store fails nothing was created, and when creating fails later
+			// the worst left behind is a stored password for no container.
+			if passwordTo != "" {
+				if err := storeSecret(cmd.Context(), passwordTo, pw, secretsource.StoreOptions{Replace: replace}); err != nil {
+					return fmt.Errorf("the password was not stored in %s, so no container was created: %w", passwordTo, err)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "Password stored in %s (not printed).\n", passwordTo)
+			}
 			f, err := os.OpenFile(args[0], os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 			if err != nil {
-				return err
+				return withStored(err, passwordTo)
 			}
 			ctr, undo, err := s.tpm.newCounter()
 			if err != nil {
 				f.Close()
 				os.Remove(args[0])
-				return err
+				return withStored(err, passwordTo)
 			}
 			c, code, err := theca.Create(theca.FileBacking{File: f}, theca.CreateOptions{
 				Sectors: n / theca.SectorSize, JournalEntries: journal, Hint: s.hint,
@@ -445,21 +480,43 @@ func createCmd() *cobra.Command {
 				undo()
 				f.Close()
 				os.Remove(args[0])
-				return err
+				return withStored(err, passwordTo)
 			}
 			// The code is printed even if closing fails: the container is
 			// formatted and the code is the only copy there will ever be.
-			fmt.Fprintln(cmd.ErrOrStderr(), "Recovery code (shown once, never stored; write it down):")
-			fmt.Fprintln(cmd.OutOrStdout(), code)
+			var storeErr error
+			if recoveryTo != "" {
+				storeErr = storeSecret(cmd.Context(), recoveryTo, []byte(code), secretsource.StoreOptions{Replace: replace})
+			}
+			switch {
+			case recoveryTo != "" && storeErr == nil:
+				fmt.Fprintf(cmd.ErrOrStderr(), "Recovery code stored in %s (not printed).\n", recoveryTo)
+			case storeErr != nil:
+				// The store failed: the code is printed after all, because the
+				// container exists and this is the only copy there will ever be.
+				fmt.Fprintf(cmd.ErrOrStderr(), "The recovery code could not be stored in %s (%v); it is printed here, the only copy:\n", recoveryTo, storeErr)
+				fmt.Fprintln(cmd.OutOrStdout(), code)
+			default:
+				fmt.Fprintln(cmd.ErrOrStderr(), "Recovery code (shown once, never stored; write it down):")
+				fmt.Fprintln(cmd.OutOrStdout(), code)
+			}
 			if ctr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rollback counter: TPM NV index %#08x; give --counter tpm to every command that opens this container\n", ctr.Handle())
 			} else {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: no rollback counter: an older copy of this container would be accepted")
 			}
-			return closeBoth(c, f, nil)
+			return closeBoth(c, f, storeErr)
 		},
 	}
 	s.flags(cmd)
+	cmd.Flags().StringVar(&passwordTo, "password-to", "", "store the new password in a secret manager (keychain:, secretservice:, keepassxc:URL) BEFORE creating the container; the terminal's typed-twice password, or --generate")
+	cmd.Flags().StringVar(&recoveryTo, "recovery-to", "", "store the recovery code there instead of printing it (if that fails it is printed after all)")
+	cmd.Flags().IntVar(&generate, "generate", 0, "draw N random characters as the password (needs --password-to)")
+	cmd.Flags().BoolVar(&replace, "replace", false, "overwrite an existing entry at --password-to / --recovery-to")
+	cmd.MarkFlagsMutuallyExclusive("password-to", "password-file")
+	cmd.MarkFlagsMutuallyExclusive("password-to", "password-from")
+	cmd.MarkFlagsMutuallyExclusive("generate", "password-file")
+	cmd.MarkFlagsMutuallyExclusive("generate", "password-from")
 	cmd.Flags().StringVar(&size, "size", "", "logical size, a multiple of 4096 bytes (suffixes K, M, G, T)")
 	cmd.Flags().StringVar(&policy, "policy", "any", "any: password or recovery code alone opens it; 2of3: both are needed")
 	cmd.Flags().StringVar(&fsKind, "fs", "", "format the volume with this filesystem: exfat (serve needs one); empty: a raw volume")

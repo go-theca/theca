@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.16.0
+
+- `create --password-to REF`, `--recovery-to REF`, `--generate N`, `--replace`: the new
+  password and the recovery code go straight into a secret manager
+  (`keychain:`, `secretservice:`, `keepassxc:URL`) through go-authn/secretsource v0.5.0,
+  so neither is typed into a file or left on the terminal. `--generate N` draws the password
+  (letters and digits) and needs `--password-to`; `--password-to` and `--generate` exclude
+  `--password-file` and `--password-from`.
+- Order, so a failure is safe: the password is stored BEFORE the container is created (a
+  failed store creates nothing; a later failure says the password stays stored, for no
+  container). The recovery code is stored after creation, and when that store fails it is
+  printed after all (the only copy) and create exits with the error.
+
 ## v0.15.0
 
 - Fix: `--*-from keepassxc:by-uuid/...` and `keepassxc:by-path/...` (v0.14.0)

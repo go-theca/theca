@@ -50,6 +50,16 @@ theca export vault.theca --password-file pw > disk.img
   theca info vault.theca --fido2 --password-from secretservice:theca/vault --pin-from secretservice:fido/yubikey-5c
   theca info vault.theca --fido2 --password-from 'keepassxc:https://theca.invalid/vault' --pin-from 'keepassxc:https://fido.invalid/yubikey-5c'
   ```
+- `create --password-to REF [--generate 24] [--recovery-to REF2] [--replace]` stores the new
+  password (typed twice, or drawn) and the recovery code in a secret manager, with no plaintext
+  file and nothing secret printed. The password is stored before the container is created; if
+  storing the recovery code fails, the code is printed after all. For example:
+
+  ```sh
+  theca create vault.theca --size 1G --password-to 'keepassxc:https://theca.invalid/vault' --generate 24 \
+      --recovery-to 'keepassxc:https://theca.invalid/vault-recovery'
+  ```
+
 - `create` prints the recovery code once, on standard output. It is never
   stored. If you redirect it to a file, that file gets your umask (often
   `0644`): restrict it, or better, write the code down on paper.

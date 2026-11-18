@@ -6,7 +6,7 @@ require (
 	github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-authn/fido v0.12.0
-	github.com/go-authn/secretsource v0.3.0
+	github.com/go-authn/secretsource v0.5.0
 	github.com/go-encryptions/argon2 v0.1.0
 	github.com/go-encryptions/ctr v0.1.1
 	github.com/go-fileshare/automount v0.1.1
@@ -32,7 +32,7 @@ require (
 	github.com/go-filesystems/interface v0.6.0 // indirect
 	github.com/go-fleettools/fleettools v0.81.0 // indirect
 	github.com/go-freedesktop/gvfs v0.1.1 // indirect
-	github.com/go-freedesktop/secretservice v0.3.0 // indirect
+	github.com/go-freedesktop/secretservice v0.4.0 // indirect
 	github.com/go-macos/iokit v0.14.0 // indirect
 	github.com/go-macos/keychain v0.3.1 // indirect
 	github.com/go-macos/netfs v0.1.0 // indirect
