@@ -34,8 +34,11 @@ theca export vault.theca --password-file pw > disk.img
 - **Or from a secret manager, so no plaintext file sits on disk.**
   `--password-from`, `--recovery-from` and `--pin-from` (the FIDO2 key's PIN) take
   a reference: `keychain:SERVICE/ACCOUNT` (macOS Keychain),
-  `secretservice:SERVICE/ACCOUNT` (GNOME Keyring, KWallet, KeePassXC with
-  *Secret Service Integration*) or `file:PATH`. A reference holds no secret, and
+  `secretservice:SERVICE/ACCOUNT` or `secretservice:KEY=VALUE,...` (GNOME
+  Keyring, KWallet, KeePassXC with *Secret Service Integration*),
+  `keepassxc:by-path/Group/Title` (KeePassXC itself, on macOS and Linux, through
+  its browser-integration socket: enable it, run
+  `secretsource keepassxc associate` once and approve it in KeePassXC) or `file:PATH`. A reference holds no secret, and
   no scheme runs a command. Each excludes the `-file` flag of the same secret.
   See [go-authn/secretsource](https://github.com/go-authn/secretsource).
 
@@ -43,6 +46,7 @@ theca export vault.theca --password-file pw > disk.img
   security add-generic-password -s theca -a vault -w          # macOS: asks for the password
   theca info vault.theca --password-from keychain:theca/vault
   theca info vault.theca --fido2 --password-from secretservice:theca/vault --pin-from secretservice:fido/yubikey-5c
+  theca info vault.theca --fido2 --password-from 'keepassxc:by-path/Theca vault' --pin-from 'keepassxc:by-path/Yubikey PIN'
   ```
 - `create` prints the recovery code once, on standard output. It is never
   stored. If you redirect it to a file, that file gets your umask (often
