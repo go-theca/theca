@@ -21,6 +21,8 @@ func cborMarshal(v any) ([]byte, error) { return cbor.Marshal(v) }
 // authenticatorSelection at once, so a touch is instant.
 type answerKey struct {
 	name string
+	// stored is the name this key holds (read without a touch or a PIN).
+	stored string
 	// hold, when set, delays the touch until it is closed.
 	hold  chan struct{}
 	mu    sync.Mutex
@@ -87,6 +89,13 @@ func (a *answerKey) Send(report []byte) error {
 				<-a.hold
 				a.say(own, authn.CmdCBOR, []byte{0})
 			}()
+		case authn.CmdGetAssertion:
+			if a.stored == "" {
+				a.say(own, authn.CmdCBOR, []byte{0x2E})
+				break
+			}
+			body, _ := cborMarshal(map[uint64]any{1: map[string]any{"type": "public-key", "id": []byte{1}}, 2: make([]byte, 37), 3: []byte{1}, 4: map[string]any{"id": []byte(a.stored)}})
+			a.say(own, authn.CmdCBOR, append([]byte{0}, body...))
 		default:
 			a.say(own, authn.CmdCBOR, []byte{0x01})
 		}
@@ -291,4 +300,67 @@ func TestADeviceIsPassedThroughOpenAndNamedByLabel(t *testing.T) {
 	if err != nil || !strings.Contains(w.Label(), "Windows") {
 		t.Errorf("%v %v", w, err)
 	}
+}
+
+func TestAKeyIsShownByItsNameAndFoundByIt(t *testing.T) {
+	a, b := newAnswerKey("Alpha"), newAnswerKey("Beta")
+	a.stored, b.stored = "desk", "travel"
+	var said []string
+	c := &config{notice: func(m string) { said = append(said, m) }}
+	withKeys(t, []keyDevice{a.dev("id:a"), b.dev("id:b")}, nil)
+
+	// By ID: shown with its name.
+	c.device = "id:b"
+	k, label, err := openTransport(ctx, c)
+	if err != nil || label != "Beta at id:b \"travel\"" || said[len(said)-1] != "Using security key: Beta at id:b \"travel\"" {
+		t.Fatalf("%q %v %q", label, err, said)
+	}
+	k.Close()
+	// By name, exactly.
+	c.device = "desk"
+	k, label, err = openTransport(ctx, c)
+	if err != nil || label != "Alpha at id:a \"desk\"" {
+		t.Fatalf("%q %v", label, err)
+	}
+	k.Close()
+	for _, bad := range []string{"des", "Desk", "id:"} {
+		c.device = bad
+		if _, _, err := openTransport(ctx, c); err == nil || !strings.Contains(err.Error(), "no attached key has the id or name") {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+	// A name on two keys: refused, naming both.
+	b.stored = "desk"
+	withKeys(t, []keyDevice{newKeyWithName("Alpha", "desk").dev("id:a"), newKeyWithName("Beta", "desk").dev("id:b")}, nil)
+	c.device = "desk"
+	if _, _, err := openTransport(ctx, c); err == nil || !strings.Contains(err.Error(), "is on 2 keys") || !strings.Contains(err.Error(), "id:a") || !strings.Contains(err.Error(), "id:b") {
+		t.Errorf("%v", err)
+	}
+	// A key that will not open is skipped; an unnamed key is just its label.
+	bad := keyDevice{ID: "id:c", open: func(context.Context) (*authn.Key, error) { return nil, errors.New("busy") }}
+	withKeys(t, []keyDevice{bad, newKeyWithName("Alpha", "desk").dev("id:a")}, nil)
+	if _, label, err := openTransport(ctx, c); err != nil || !strings.Contains(label, "desk") {
+		t.Errorf("%q %v", label, err)
+	}
+	withKeys(t, []keyDevice{newAnswerKey("Plain").dev("id:p")}, nil)
+	if _, label, _ := openTransport(ctx, &config{}); label != "Plain at id:p" {
+		t.Errorf("%q", label)
+	}
+	// The key chosen by touch is shown with its name too.
+	withKeys(t, []keyDevice{newKeyWithName("Alpha", "desk").dev("id:a"), newAnswerKey("Beta").dev("id:b")}, nil)
+	ot := chooseKey
+	t.Cleanup(func() { chooseKey = ot })
+	chooseKey = func(ctx context.Context, devs []keyDevice) (*authn.Selected, error) {
+		k, err := devs[0].open(ctx)
+		return &authn.Selected{Label: devs[0].Label, Key: k}, err
+	}
+	if _, label, err := openTransport(ctx, &config{}); err != nil || label != "Alpha at id:a \"desk\"" {
+		t.Errorf("%q %v", label, err)
+	}
+}
+
+func newKeyWithName(name, stored string) *answerKey {
+	k := newAnswerKey(name)
+	k.stored = stored
+	return k
 }
