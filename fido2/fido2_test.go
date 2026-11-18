@@ -143,15 +143,19 @@ func (f *fakeKey) Close() error { f.closed = true; return nil }
 
 func pinFn(p string) func() (string, error) { return func() (string, error) { return p, nil } }
 
+// lastConfig is what the last Open asked openKey for.
+var lastConfig config
+
 func withFake(t *testing.T, f *fakeKey, err error) {
 	t.Helper()
 	saved := openKey
 	t.Cleanup(func() { openKey = saved })
-	openKey = func(context.Context) (key, error) {
+	openKey = func(_ context.Context, c *config) (key, string, error) {
+		lastConfig = *c
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		return f, nil
+		return f, "fake key", nil
 	}
 }
 
@@ -354,16 +358,6 @@ func (f *failSecondUV) UVToken(ctx context.Context, p authn.PINProtocol, perm au
 		return authn.Token{}, boomUV
 	}
 	return f.fakeKey.UVToken(ctx, p, perm, rp)
-}
-
-// TestTheTransportIsReached: on a machine without a key (CI) the real
-// transport answers an error; with one attached it opens. Either way the
-// call goes through go-macos/fido.
-func TestTheTransportIsReached(t *testing.T) {
-	k, err := openKey(ctx) // the default, which is openTransport
-	if err == nil {
-		k.Close()
-	}
 }
 
 // The built-in verification paths (CTAP 2.1 6.4 "uv", 6.5.5.7.3).

@@ -43,12 +43,24 @@ var (
 	ErrUVLocked = errors.New("fido2: the key's built-in verification is unavailable")
 )
 
-// Option adjusts a Device at Open.
-type Option func(*Device)
+// config is what the options set; Open reads it before the key is chosen.
+type config struct {
+	notice func(string)
+	device string
+}
+
+// Option adjusts Open.
+type Option func(*config)
 
 // WithNotice makes Open's Device report what it does on the person's behalf
-// (a fingerprint retry, the fall back to the PIN) through f.
-func WithNotice(f func(string)) Option { return func(d *Device) { d.notice = f } }
+// (the key chosen, a fingerprint retry, the fall back to the PIN) through f.
+func WithNotice(f func(string)) Option { return func(c *config) { c.notice = f } }
+
+// WithDevice names the key to use, by the ID go-authn/fido's `fido list`
+// prints (macOS: iokit:<location>; Linux: the USB port, else the hidraw node).
+// Without it, one attached key is used and several are chosen between by
+// touch. Windows chooses in its own dialog and refuses a device ID.
+func WithDevice(id string) Option { return func(c *config) { c.device = id } }
 
 // key is the part of *authn.Key this package uses; tests replace it.
 type key interface {
@@ -71,13 +83,19 @@ type Device struct {
 	uv     bool // built-in user verification is CONFIGURED (option "uv" true; false or absent: no)
 	canPIN bool // a PIN is set (option "clientPin" true) and a function can ask for it
 	notice func(string)
+	label  string    // which key this is, for a person
 	win    *platform // Windows: webauthn.dll does CTAP, the PIN and the UI; k is nil
 }
 
+// Label says which key this is (product, id and serial when it has one), so a
+// caller can name the key it paired or opened.
+func (d *Device) Label() string { return d.label }
+
 var _ theca.FIDO2 = (*Device)(nil)
 
-// openKey opens the attached authenticator; tests replace it.
-var openKey = func(ctx context.Context) (key, error) { return openTransport(ctx) }
+// openKey opens the authenticator the options choose and says which one it is;
+// tests replace it.
+var openKey = func(ctx context.Context, c *config) (key, string, error) { return openTransport(ctx, c) }
 
 // goos and winAPI are seams: tests choose the operating system and fake
 // webauthn.dll.
@@ -90,27 +108,34 @@ var (
 // hmac-secret, credProtect, discoverable credentials, and a way to verify
 // the person (its own, or a PIN, which pin returns when asked).
 func Open(ctx context.Context, pin func() (string, error), opts ...Option) (*Device, error) {
-	d, err := open(ctx, pin)
+	var c config
+	for _, o := range opts {
+		o(&c)
+	}
+	d, err := open(ctx, pin, &c)
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range opts {
-		o(d)
-	}
+	d.notice = c.notice
 	return d, nil
 }
 
-func open(ctx context.Context, pin func() (string, error)) (*Device, error) {
+func open(ctx context.Context, pin func() (string, error), c *config) (*Device, error) {
 	if goos == "windows" {
 		// Windows will not let an unelevated process open the key (1903+); it
-		// does the PIN and the dialog itself, so pin is not used.
+		// does the PIN and the dialog itself, so pin is not used. It also
+		// chooses the key itself, in that dialog: a device ID would be a
+		// promise nobody keeps.
+		if c.device != "" {
+			return nil, errors.New("fido2: --device does not apply on Windows, which asks which key in its own dialog")
+		}
 		w, err := openPlatform(winAPI)
 		if err != nil {
 			return nil, err
 		}
-		return &Device{win: w}, nil
+		return &Device{win: w, label: "the key Windows asks you to choose"}, nil
 	}
-	k, err := openKey(ctx)
+	k, label, err := openKey(ctx, c)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +144,7 @@ func open(ctx context.Context, pin func() (string, error)) (*Device, error) {
 		k.Close()
 		return nil, err
 	}
+	d.label = label
 	return d, nil
 }
 

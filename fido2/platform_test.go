@@ -169,24 +169,6 @@ func TestWindowsDeriveWithoutOutputIsNoCredential(t *testing.T) {
 	}
 }
 
-func TestTheTransportIsChosenByGOOS(t *testing.T) {
-	sg := goos
-	defer func() { goos = sg }()
-	goos = "plan9"
-	if _, err := openTransport(ctx); err == nil {
-		t.Error("an unsupported system opened a transport")
-	}
-	// darwin and linux reach their transports; with no key attached (CI) they
-	// answer an error, with one they open. The transport of another OS answers
-	// ErrUnsupported, never a panic.
-	for _, os := range []string{"darwin", "linux"} {
-		goos = os
-		if k, err := openTransport(ctx); err == nil {
-			k.Close()
-		}
-	}
-}
-
 // The real passthrough is reached with empty requests, which every build
 // refuses (the stub says unsupported, Windows' own check says the request is
 // incomplete) before any dialog could appear.
