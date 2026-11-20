@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.21.0
+
+- Deprecated: `--password-file`, `--recovery-file`, `--pin-file`, `--tpm-auth-file`,
+  `--tpm-owner-auth-file` (go-theca/theca#55). They still work, are hidden from the help, and
+  each use prints a warning on standard error naming the `--X-from` replacement. So does a
+  `file:` reference in `--password-from`, `--recovery-from` and `--pin-from`. Removal is a
+  later MINOR release (below v1.0.0 a breaking change is a MINOR bump); the TPM flags go
+  first, the three container-secret flags after a separate decision.
+- Breaking: `--tpm-auth-from` refuses a `file:` reference, as `--tpm-owner-auth-from` and
+  `--tpm-endorsement-auth-from` already did. (Use `--tpm-auth-file`, or a secret manager.)
+- The `--password-from` family help no longer lists `file:PATH` as a choice.
+
 ## v0.20.0
 
 - Multi-factor made easy every day: `theca profile add NAME FILE ...` names a container once,
