@@ -465,7 +465,7 @@ counter is read**: a value read from another TPM decides nothing. A mismatch is
 back (rebind, with the warning that if the TPM was not replaced, something else
 is answering and one must not rebind). `--accept-rollback` does not bypass it.
 A counter that cannot say which TPM it is on, or a TPM that cannot create its
-EK (a set endorsement authValue), is a refusal, not "no pin". A container made
+EK (a set endorsement authValue without `--tpm-endorsement-auth-from`, §5.4.2), is a refusal, not "no pin". A container made
 before v0.18.0 has no identity: it **opens as before, with a stated warning** at
 every mount and on `info`, and a mount does not pin it (a mount by the
 attacker's TPM would pin the attacker's TPM). Only `counter rebind`, which the
@@ -531,6 +531,66 @@ with `--tpm-auth-file`, empty by default) Which write policy for the index: a
 policy bound to a TPM-resident Theca key, or `authValue` from the unlock (the
 latter allows increments only after unlock)? **Q3.2** What should happen on a platform without a counter:
 refuse, warn, or record "rollback-unprotected" in the header?
+
+#### 5.4.2 Endorsement password, and the counter's authValue derived from the container (follow-up to #39, v0.19.0)
+
+**The endorsement password.** §5.4.1 creates the EK under the endorsement
+hierarchy with an empty authValue, so on a TPM whose administrator set an
+endorsement password a pinned container was refused at every mount: a denial of
+service for the legitimate owner. `--tpm-endorsement-auth-from REF` supplies the
+password (`create`, `counter rebind` and every mount); `tpmcounter.Options.EndorsementAuth`
+goes to `tpm2.EKIdentityAuth` (go-tpm2/tpm2 v0.12.0). The flag takes a secret
+manager reference only (`keychain:`, `secretservice:`, `keepassxc:`): a `file:`
+reference is refused, so that no password file sits beside the hardware keys.
+`--tpm-owner-auth-from` and `--tpm-auth-from` are the same for the other two
+passwords; the `-file` flags stay for now and are to be deprecated (go-theca/theca#55).
+When the TPM answers `TPM_RC_BAD_AUTH` or `TPM_RC_AUTH_FAIL`, the error is
+`tpmcounter.ErrEndorsementAuth` and the message names the flag.
+
+**Does a wrong endorsement password count toward the dictionary-attack lockout?
+No.** TCG TPM 2.0 Part 1 rev 1.59, 19.8.1 (p. 132, opened): "The authValue
+associated with a permanent entity, other than TPM_RH_LOCKOUT, does not receive
+DA protection"; the endorsement hierarchy is a permanent entity. 19.8.3 Note 2
+(p. 134): an authorization failure that does not increment `failedTries` is
+`TPM_RC_BAD_AUTH`. Measured on swtpm (`TestSwtpmEKAuth` in go-tpm2/tpm2,
+`TestEndorsementAuthSwtpm` here): wrong and empty passwords, `TPM_RC_BAD_AUTH`,
+`TPM_PT_LOCKOUT_COUNTER` unchanged. The consequence cuts both ways: a mistaken
+password cannot lock the TPM, and an attacker with access to the TPM can guess
+the endorsement password without throttling (as for the owner password): choose
+a high-entropy one and keep it in a manager.
+
+**The counter's own authValue, derived.** Until v0.18.0 the counter's authValue
+was a file (`--tpm-auth-file`, or empty): a stored secret beside a container
+whose point is that nothing is stored. The master secret is available when it
+is needed. `Open` unlocks a slot and authenticates the header (whose body names
+the counter's handle and Name) **before** `checkCounter` runs and before the
+journal is replayed (§5.3: `open.go`, `Open`: `unlockSlots`, `OpenHeader`,
+`checkCounter`, `recover`). So the authValue can be a function of the master
+secret: `HKDF-SHA-256(MS, info "theca/v1/counter-auth")`, 32 bytes (the digest
+size of the counter's nameAlg, the most Part 1 19.6.4.2, p. 105, allows), last
+octet forced non-zero because a TPM strips trailing zero octets of an authValue
+(19.6.4.3, p. 105). Whoever can unlock the container (password plus security
+key) can derive it; nobody else. `create --counter tpm` with no
+`--tpm-auth-*` flag makes the counter AFTER the master secret exists
+(`CreateOptions.NewCounter`, handed the derived value), and records
+flag bit 2 (`DerivedAuth`) in the header, so a mount knows to ask
+`OpenOptions.CounterDerived` rather than `CounterFor`: an existing counter whose
+authValue is empty or stored cannot be mistaken for a derived one (a wrong
+authValue is an authorization failure on the index, and a v0.9.0 counter without
+NO_DA would count it). `counter rebind` with no `--tpm-auth-*` flag migrates a
+container to a derived authValue (`OpenOptions.RebindDerived`); with the flags it
+keeps a stored one. Counters made by older versions keep working with their
+flag. Header format: one more optional flag bit; older readers refuse a header
+that has it.
+
+**What it does not do.** Derivation protects against someone who has the TPM
+(or its NV index authorization) but not the container's factors: they cannot
+increment the counter, so cannot push it forward to deny service by anything but
+deleting the index, which the owner can always do (§19 I22). It does not
+protect against whoever unlocks the container; they hold the master secret anyway.
+The derived value lives in the process while a counter object exists (a
+`tpmcounter.Counter` holds its options); it is not wiped when the command exits
+normally beyond Go's GC (§13).
 
 ---
 
@@ -1091,3 +1151,4 @@ design stays the reference; each row says why the code won.
 | I22 | §5.4, Q3.1, R2 | **The TPM counter (v0.9.0).** `tpmcounter` implements `Counter` over go-tpm2/tpm2 v0.9.0: `NVDefineCounter` (index type `TPM_NT_COUNTER`, attributes COUNTER, AUTHWRITE and AUTHREAD, no policy), `NVIncrementAuth`, `NVReadCounter`. **Q3.1 decided**: the index's own `authValue`, from `--tpm-auth-file` (empty if absent, at most 32 bytes), not a policy bound to a TPM key. The owner password for the definition comes from `--tpm-owner-auth-file`, create only. **`POLICY_DELETE` is dropped from §5.4**: Part 3 §31.3.1 (p. 378, opened) says that attribute is accepted only when the index is defined with Platform Authorization, and swtpm refused an owner definition with `TPM_RC_ATTRIBUTES`. The owner can therefore delete the counter with `NV_UndefineSpace`, and `TPM2_Clear` removes it (note 4 there). This is a **denial of service, not a rollback**: a counter redefined afterwards has the same Name but starts above every earlier count (checked on swtpm: Part 3 p. 376), so the recorded bound `b` never equals it again and the container is refused until `--accept-rollback`. **The Name changes once**: it covers `TPMA_NV_WRITTEN`, which the first increment sets, so the counter reads its Name again after an increment (measured; the first end-to-end test failed on it). A mount under a counter **writes** (it rebinds the header), so `info`, `verify` and `export` open the file read-write with `--counter tpm`. The counter is found from the authenticated header (`OpenOptions.CounterFor`), because the header has no plaintext fields: the user does not name a handle. A `Counter` holds no connection: each operation opens the device. Transports: `/dev/tpmrm0` (Linux), `unix:SOCKET` (software TPM); macOS has no TPM and go-tpm2 has no Windows TBS transport, so both return `ErrUnsupported`. `TPMA_NV_ORDERLY` stays unused (§31.8.1 note 2). Limit unchanged from I20: one counter per container. **Review of v0.9.0, fixed in v0.10.0.** (1) *Availability*: with the counter gone (index undefined, `TPM2_Clear`, reinstall) the open failed before `AcceptRollback` was read, so the container could not be opened and the README's "refused until `--accept-rollback`" was false. Recovery is now `theca counter rebind` (`OpenOptions.RebindFor`): it needs the unlocking factors and the owner password, defines a counter (at the recorded handle if free), increments it, binds Handle, Name and Bound to it and commits; **rollback protection restarts from that moment, and nothing is checked against the old counter.** The refusal names it. Tested on swtpm for a deleted index and for another TPM. (2) *Design limit*: the header binds a counter's **kind** (handle, and a Name that covers type and attributes), not a **TPM**. Whoever controls the TPM in use (a virtual TPM's host, a software TPM whose state sits on the container's storage, a replaced TPM) can define an index with the same Name and raise it to at least an old bound. The protection is against replacement of the container file, not against the TPM's controller. Pinning the TPM's identity (an EK-based or attested identity, `NV_Certify` under an attestation key) is a separate issue. (3) `TPMA_NV_NO_DA` (Part 2 Table 225, p. 165, opened) is set on new counters: the authValue is a secret from a file, so DA throttling buys nothing, and a wrong file must not lock the TPM's other users; swtpm shows 40 wrong authValues lock an index without it and not with it. v0.9.0 counters (without NO_DA, another Name) are still opened (`IsCounterAttributes`). | The protocol was written without having defined an index: the POLICY_DELETE assumption and the stable Name were both wrong and both found by a real (software) TPM. Not measured: a hardware TPM (fractal's `/dev/tpmrm0` is not readable by an unprivileged user), Windows. |
 | I23 | §6.2, I20, I21 | **Making the key mandatory (go-theca/theca#43).** Under policy `any`, `EnrollFIDO2` only ADDS the slots `{password, key}` (and `{recovery, key}`); the password-only and recovery-only slots stay, so the password alone still opens the container. Measured on a YubiKey Bio (v0.10.3): `enroll-key` left a container the password alone opened, and `slots remove --keep` could not name the key, so "the key still opens it" was never checked before a removal. **Design.** A set that stands for the key is `{partner, key}` with exactly ONE partner (I21: a key's salt comes from its partner, so no slot is the key alone, and `password+recovery+fido2` is not a set): `password+fido2`, `recovery+fido2`. One Derive (one touch) answers every Theca credential on the key for the salts of the presented partners (`KeyPairs`); a set with the key is then one pair per credential, and `RemoveFactorSets(remove, keep [][]Factor)` removes the slots ANY remove-set opens and requires ANY keep-set to open a slot not among them, else `ErrLastWay` (`RemoveFactors` is the one-set case). The proof is therefore the slot trial-opened under the touched key: a key that is not the one enrolled here, or that holds no Theca credential (`ErrNoCredential`), proves nothing and refuses BEFORE any write. `enroll-key` reports from the container what still opens it (`SlotsOf` of the password, of the recovery code when presented) and prints the exact `slots remove` command. `enroll-key --require` pairs, touches the key once more (the proof, so two enrolment touches plus one), and only then removes the password-only slot; the pairing and the removal are two commits, and a crash or refusal between them leaves BOTH the new key slot and the password-only slot (a way in is never missing), the output saying the password still opens it. **What `--require` does NOT do**: it never removes the recovery-only slot, because the recovery code is the way in if the key is lost; under policy `any` it therefore still opens the container alone, and the output says so with the command that removes it (`--remove recovery --keep password+fido2`, after which a lost key means a lost container). A recovery code that was not presented cannot be tested, and the output says that too. **Limits**: a container that only the key opens needs `--fido2` to be opened at all, so a removal there touches twice (open, proof); `enroll-key` has no `--fido2`, so a second key cannot be added to such a container (the unlock and the enrolment would hold two handles on one device). Like `RemoveSlot`, none of this stops an older copy (R7). | The issue's own two proposals (a `--keep` with the key, `--require`) are both implemented over one primitive instead of two. |
 | I24 | §5.4.1, I22 | **TPM identity pinning (go-theca/theca#39, v0.18.0).** The header body gets an optional 32-byte `TPMID` (flag bit 1): the digest inside the Name of the TPM's ECC P-256 EK, from `tpm2.EKIdentity` (go-tpm2/tpm2 v0.11.0, which adds `FlushContext`, `EKName`, `EKIdentity`). `theca.IdentifiedCounter` is the optional interface; `tpmcounter.Counter.Identity` implements it. Written at `create` and `counter rebind`; checked at every mount before the counter is read; mismatch is `ErrCounterIdentity` naming both (6-byte hex) with the recovery; `--accept-rollback` does not bypass it. Old containers open with a warning and are pinned only by `counter rebind`. Reproduced first: on two swtpm instances, an index with the same handle and Name raised to the bound of an old copy opened it (the control in `TestSwtpmIdentityPinning`, and the CLI test), and is refused now. `NV_Certify` under an EK-bound AK was weighed and deferred (§5.4.1). Header parsing of the new field is fuzzed (`FuzzParseBody`, seed with an identity) and refuses a flag without a counter, an identity area without the flag, and a non-zero tail. Everything the TPM answers is bounded: the EK point coordinates at most 32 bytes (`ErrEKPoint`), the Name exactly 34 bytes starting `000b`. | The EK identity names a TPM; it does not prove the TPM answering is that one (a software TPM's host, a copy of its state, a bus interposer). Measured on swtpm only; no hardware TPM, no Windows. |
+| I25 | §5.4.2, I22, I24 | **Endorsement password and a derived counter authValue (v0.19.0).** `--tpm-endorsement-auth-from`, `--tpm-owner-auth-from`, `--tpm-auth-from`: secret-manager references, `file:` refused for the first two (and the third's twin file flag stays, deprecated by an issue). The endorsement password reaches `tpm2.EKIdentityAuth` (go-tpm2/tpm2 v0.12.0: `CreateEKAuth`, `EKIdentityAuth`, `HierarchyChangeAuth`, `PTLockoutCounter`); a refusal is `tpmcounter.ErrEndorsementAuth` and the message names the flag. A wrong endorsement password does not count toward the DA lockout: Part 1 rev 1.59, 19.8.1 (opened), and measured on swtpm. The counter's authValue is `HKDF-SHA-256(MS, "theca/v1/counter-auth")` for a new counter with no `--tpm-auth-*` flag: header flag bit 2 `DerivedAuth`, `CreateOptions.NewCounter`, `OpenOptions.CounterDerived`, `OpenOptions.RebindDerived`, `Info.CounterDerivedAuth`. The order that makes it possible: the master secret and the authenticated header exist before `checkCounter` and before the journal replay. `counter rebind` without `--tpm-auth-*` migrates. | A derived authValue protects the counter against someone who has the TPM but not the factors; not against someone who unlocks the container. Older readers refuse a header with the new flag. The owner password and the endorsement password stay stored secrets (in a manager), for a TPM that has them. Measured on swtpm only. |

@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.19.0
+
+- A TPM with an endorsement hierarchy password no longer locks its owner out of a pinned
+  container (follow-up to go-theca/theca#39): `--tpm-endorsement-auth-from REF` gives the
+  password at `create`, `counter rebind` and every mount. A TPM refusal is reported as such
+  and names the flag. A wrong password does not count toward the TPM's dictionary-attack
+  lockout (TCG Part 1 rev 1.59, 19.8.1; measured on swtpm).
+- The counter's authValue is derived from the container's master key (HKDF-SHA-256, DESIGN
+  5.4.2) when `create --counter tpm` gets no `--tpm-auth-*` flag: no password file beside the
+  hardware keys. The header records it (flag bit 2); mounts need no counter flag. Counters
+  made by older versions keep working with their flag; `theca counter rebind` without
+  `--tpm-auth-*` migrates a container to a derived authValue.
+- New: `--tpm-owner-auth-from`, `--tpm-auth-from` (secret managers). A `file:` reference is
+  refused for `--tpm-endorsement-auth-from` and `--tpm-owner-auth-from`. `--tpm-auth-file`
+  and `--tpm-owner-auth-file` still work and are marked deprecated in the help.
+- `info` prints where the counter's authValue comes from.
+- Library: `CreateOptions.NewCounter`, `OpenOptions.CounterDerived`, `OpenOptions.RebindDerived`,
+  `Info.CounterDerivedAuth`, `tpmcounter.Options.EndorsementAuth`, `tpmcounter.ErrEndorsementAuth`.
+  Needs go-tpm2/tpm2 v0.12.0. Header format: one more optional flag bit; older readers
+  refuse a header that has it.
+
 ## v0.18.0
 
 - The rollback counter is pinned to THIS TPM (go-theca/theca#39). `create` and

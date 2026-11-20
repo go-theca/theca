@@ -26,6 +26,7 @@ type fakeTPM struct {
 	closeEr error
 	device  string
 	ekName  []byte // EKIdentity's answer; a fixed good Name when nil
+	ekAuth  []byte // the endorsement password EKIdentityAuth last received
 }
 
 func newFake() *fakeTPM {
@@ -83,7 +84,8 @@ func (f *fakeTPM) NVUndefineSpaceAuth(owner []byte, h uint32) error {
 	return nil
 }
 
-func (f *fakeTPM) EKIdentity() ([]byte, error) {
+func (f *fakeTPM) EKIdentityAuth(auth []byte) ([]byte, error) {
+	f.ekAuth = append([]byte(nil), auth...)
 	if e := f.fail["ek"]; e != nil {
 		return nil, e
 	}
@@ -124,6 +126,48 @@ func TestIdentity(t *testing.T) {
 	f.fail["connect"] = boom
 	if _, err := c.Identity(); !errors.Is(err, boom) {
 		t.Fatalf("connect failure: %v", err)
+	}
+}
+
+// The endorsement password goes to the TPM, and a TPM refusing it is
+// ErrEndorsementAuth (which also is ErrIdentity), whatever else fails stays
+// ErrIdentity only.
+func TestIdentityEndorsementAuth(t *testing.T) {
+	f := newFake()
+	use(t, f)
+	c := &Counter{opts: Options{Device: "unix:x", EndorsementAuth: []byte("ek-pw")}}
+	if _, err := c.Identity(); err != nil || string(f.ekAuth) != "ek-pw" {
+		t.Fatalf("identity %v, the TPM got %q", err, f.ekAuth)
+	}
+	for name, rc := range map[string]uint32{"bad auth": 0x0A2 + 0x100, "auth fail": 0x08E + 0x100} {
+		f.fail["ek"] = &tpm2.TPMError{CC: 0x131, RC: rc}
+		_, err := c.Identity()
+		if !errors.Is(err, ErrEndorsementAuth) || !errors.Is(err, ErrIdentity) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, e := range map[string]error{
+		"another rc":     &tpm2.TPMError{CC: 0x131, RC: 0x9A5}, // format one, TPM_RC_LOCKOUT-like, not an auth refusal
+		"format zero":    &tpm2.TPMError{CC: 0x131, RC: 0x22},  // TPM_RC_BAD_AUTH's number without the format-one bit
+		"not a TPMError": boom,
+	} {
+		f.fail["ek"] = e
+		if _, err := c.Identity(); errors.Is(err, ErrEndorsementAuth) || !errors.Is(err, ErrIdentity) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestCheckEndorsementAuthSize(t *testing.T) {
+	use(t, newFake())
+	if _, err := Create(Options{Device: "unix:x", EndorsementAuth: make([]byte, 65)}); !errors.Is(err, ErrAuthTooLong) {
+		t.Fatalf("65 bytes: %v", err)
+	}
+	if _, err := Create(Options{Device: "unix:x", OwnerAuth: make([]byte, 65)}); !errors.Is(err, ErrAuthTooLong) {
+		t.Fatalf("owner, 65 bytes: %v", err)
+	}
+	if _, err := Create(Options{Device: "unix:x", EndorsementAuth: make([]byte, 64), OwnerAuth: make([]byte, 64)}); err != nil {
+		t.Fatalf("64 bytes: %v", err)
 	}
 }
 
@@ -193,7 +237,7 @@ func TestCreateErrors(t *testing.T) {
 	if _, err := Create(Options{Auth: make([]byte, 33)}); !errors.Is(err, ErrAuthTooLong) {
 		t.Fatalf("auth: %v", err)
 	}
-	if _, err := Create(Options{OwnerAuth: make([]byte, 33)}); !errors.Is(err, ErrAuthTooLong) {
+	if _, err := Create(Options{OwnerAuth: make([]byte, 65)}); !errors.Is(err, ErrAuthTooLong) {
 		t.Fatalf("owner auth: %v", err)
 	}
 	f.fail["define"] = boom

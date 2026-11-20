@@ -58,6 +58,35 @@ const IDSize = 32
 // maxAuth is the digest size of the counter's nameAlg (SHA-256).
 const maxAuth = 32
 
+// maxHierarchyAuth bounds a hierarchy password before it is sent: an authValue
+// is at most the digest size of the algorithm in play (TCG Part 1 rev 1.59,
+// 19.6.4.2, p. 105), so 64 bytes (SHA-512) is the largest a TPM can ask for;
+// the TPM itself refuses what it does not take.
+const maxHierarchyAuth = 64
+
+// ErrEndorsementAuth: the TPM refused the endorsement hierarchy password
+// (TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL). The authValue of a hierarchy is not
+// DA protected, so the refusal does not count toward the lockout.
+var ErrEndorsementAuth = errors.New("tpmcounter: the TPM refused the endorsement hierarchy password")
+
+// rcBadAuth and rcAuthFail are TPM_RC_BAD_AUTH (0x22) and TPM_RC_AUTH_FAIL
+// (0x0E) in the format-one response codes.
+const (
+	rcBadAuth  = 0x22
+	rcAuthFail = 0x0E
+	rcFmt1     = 0x80
+)
+
+// isAuthRefusal reports whether err is the TPM refusing an authValue.
+func isAuthRefusal(err error) bool {
+	var te *tpm2.TPMError
+	if !errors.As(err, &te) || te.RC&rcFmt1 == 0 {
+		return false
+	}
+	n := te.RC & 0x3F
+	return n == rcBadAuth || n == rcAuthFail
+}
+
 // rcHandle is TPM_RC_HANDLE's number in the format-one response codes
 // (0x08B): a handle that does not exist.
 const rcHandle = 0x0B
@@ -76,6 +105,10 @@ type Options struct {
 	OwnerAuth []byte
 	// Auth is the counter's own authValue, used to increment and read it.
 	Auth []byte
+	// EndorsementAuth authorizes the creation of the endorsement key that names
+	// the TPM (Identity): the endorsement hierarchy password, empty on a TPM
+	// with none. A wrong one is ErrEndorsementAuth.
+	EndorsementAuth []byte
 }
 
 // nvTPM is the part of *tpm2.TPM the counter uses.
@@ -85,7 +118,7 @@ type nvTPM interface {
 	NVIncrementAuth(authHandle uint32, auth []byte, nvIndex uint32) error
 	NVReadCounter(auth []byte, nvIndex uint32) (uint64, error)
 	NVUndefineSpaceAuth(ownerAuth []byte, nvIndex uint32) error
-	EKIdentity() ([]byte, error)
+	EKIdentityAuth(endorsementAuth []byte) ([]byte, error)
 }
 
 // goos is replaced by tests.
@@ -119,7 +152,7 @@ func (o Options) device() (string, error) {
 }
 
 func (o Options) check() error {
-	if len(o.Auth) > maxAuth || len(o.OwnerAuth) > maxAuth {
+	if len(o.Auth) > maxAuth || len(o.OwnerAuth) > maxHierarchyAuth || len(o.EndorsementAuth) > maxHierarchyAuth {
 		return ErrAuthTooLong
 	}
 	return nil
@@ -263,14 +296,18 @@ func (c *Counter) Increment() error {
 // Profile ECC P-256 template, created transiently and flushed, never made
 // persistent). The same TPM gives the same identity on every call, another TPM
 // another one. Needs the endorsement hierarchy's authValue to be empty, the
-// default; otherwise it fails and the mount is refused.
+// default, or EndorsementAuth to be the password; otherwise it fails (with
+// ErrEndorsementAuth if the TPM refused the password) and the mount is refused.
 //
 // It names the TPM, it does not prove the TPM answering is that one: whoever
 // controls a software TPM can present any EK (DESIGN 5.4.1).
 func (c *Counter) Identity() ([]byte, error) {
 	var id []byte
 	err := c.opts.with(func(t nvTPM) error {
-		name, err := t.EKIdentity()
+		name, err := t.EKIdentityAuth(c.opts.EndorsementAuth)
+		if isAuthRefusal(err) {
+			return fmt.Errorf("%w: %w (%v)", ErrIdentity, ErrEndorsementAuth, err)
+		}
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrIdentity, err)
 		}

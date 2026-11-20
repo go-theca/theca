@@ -106,6 +106,25 @@ func Keys(kek *[32]byte) *ta1.Keys {
 	return k
 }
 
+// CounterAuthSize is the size of a derived counter authValue: the digest size
+// of the counter's nameAlg (SHA-256), the most a TPM accepts for it.
+const CounterAuthSize = 32
+
+// CounterAuth derives the authValue of a container's TPM counter from its
+// master secret: HKDF-SHA-256, info "theca/v1/counter-auth" (DESIGN 5.4.2).
+// Whoever can unlock the container can derive it; nobody else can. The last
+// byte is forced non-zero: a TPM strips trailing zero octets of an authValue
+// before use (TCG Part 1 rev 1.59, 19.6.4.3 "Authorization Size Convention",
+// p. 105, and Note 2 to equation (17)), so a value ending in 0x00 would be a
+// shorter one. The caller wipes the result.
+func CounterAuth(ms *ta1.Keys) []byte {
+	b := ms.Bytes()
+	defer clear(b)
+	k, _ := hkdf.Key(sha256.New, b, nil, "theca/v1/counter-auth", CounterAuthSize)
+	k[CounterAuthSize-1] |= 1
+	return k
+}
+
 // platformMax is the largest int; a variable so a 64-bit test can exercise
 // the 32-bit refusal.
 var platformMax = uint64(^uint(0) >> 1)

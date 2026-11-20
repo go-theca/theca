@@ -232,12 +232,13 @@ func (c *Container) recover() error {
 
 // counterGate is the decision checkCounter took, applied by bindCounter.
 type counterGate struct {
-	bound  bool   // the header names a counter
-	finish bool   // b == c+1: an earlier mount crashed before its increment
-	base   uint64 // the counter value once any unfinished increment is done
-	ctr    Counter
-	rebind bool   // bind the header to a new counter (OpenOptions.RebindFor)
-	id     []byte // rebind: the identity of the new counter's TPM, nil if it has none
+	bound   bool   // the header names a counter
+	finish  bool   // b == c+1: an earlier mount crashed before its increment
+	base    uint64 // the counter value once any unfinished increment is done
+	ctr     Counter
+	rebind  bool   // bind the header to a new counter (OpenOptions.RebindFor)
+	id      []byte // rebind: the identity of the new counter's TPM, nil if it has none
+	derived bool   // rebind: the new counter's authValue is derived from the master secret
 }
 
 // checkCounter runs the read-only half of the mount protocol of DESIGN 5.4:
@@ -245,13 +246,22 @@ type counterGate struct {
 // nothing, to the backing or to the counter.
 func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 	b := c.body.Counter
-	if o.RebindFor != nil {
+	if o.RebindFor != nil || o.RebindDerived != nil {
 		var h uint32
 		var n []byte
 		if b != nil {
 			h, n = b.Handle, b.Name
 		}
-		ctr, err := o.RebindFor(h, n)
+		var ctr Counter
+		var err error
+		derived := o.RebindFor == nil
+		if derived {
+			auth := kdf.CounterAuth(c.k)
+			ctr, err = o.RebindDerived(h, n, auth)
+			clear(auth)
+		} else {
+			ctr, err = o.RebindFor(h, n)
+		}
 		if err != nil {
 			return counterGate{}, err
 		}
@@ -261,13 +271,21 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 		if err != nil {
 			return counterGate{}, err
 		}
-		return counterGate{bound: true, rebind: true, ctr: ctr, id: id}, nil
+		return counterGate{bound: true, rebind: true, ctr: ctr, id: id, derived: derived}, nil
 	}
 	if b == nil {
 		return counterGate{}, nil // "rollback-unprotected": Info.RollbackProtected is false
 	}
 	ctr := o.Counter
-	if ctr == nil && o.CounterFor != nil {
+	if ctr == nil && b.DerivedAuth && o.CounterDerived != nil {
+		auth := kdf.CounterAuth(c.k)
+		var err error
+		ctr, err = o.CounterDerived(b.Handle, b.Name, auth)
+		clear(auth)
+		if err != nil {
+			return counterGate{}, err
+		}
+	} else if ctr == nil && !b.DerivedAuth && o.CounterFor != nil {
 		var err error
 		if ctr, err = o.CounterFor(b.Handle, b.Name); err != nil {
 			return counterGate{}, err
@@ -317,7 +335,7 @@ func (c *Container) bindCounter(g counterGate) error {
 		if err != nil {
 			return err
 		}
-		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0, TPMID: g.id}
+		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0, TPMID: g.id, DerivedAuth: g.derived}
 		c.mu.Lock()
 		err = c.commitLocked("rebind counter")
 		c.mu.Unlock()
@@ -332,7 +350,7 @@ func (c *Container) bindCounter(g counterGate) error {
 		return fmt.Errorf("%w: counter exhausted", ErrCounter)
 	}
 	b := c.body.Counter
-	c.body.Counter = &format.Counter{Handle: b.Handle, Name: b.Name, Bound: g.base + 1, TPMID: b.TPMID}
+	c.body.Counter = &format.Counter{Handle: b.Handle, Name: b.Name, Bound: g.base + 1, TPMID: b.TPMID, DerivedAuth: b.DerivedAuth}
 	c.mu.Lock()
 	err := c.commitLocked("bind counter")
 	c.mu.Unlock()

@@ -476,7 +476,7 @@ func createCmd() *cobra.Command {
 			if err != nil {
 				return withStored(err, passwordTo)
 			}
-			ctr, undo, err := s.tpm.newCounter()
+			ctr, mkCounter, undo, err := s.tpm.newCounter(cmd.Context())
 			if err != nil {
 				f.Close()
 				os.Remove(args[0])
@@ -484,8 +484,9 @@ func createCmd() *cobra.Command {
 			}
 			c, code, err := theca.Create(theca.FileBacking{File: f}, theca.CreateOptions{
 				Sectors: n / theca.SectorSize, JournalEntries: journal, Hint: s.hint,
-				Password: pw, Policy: pol, Counter: ctr,
+				Password: pw, Policy: pol, Counter: ctr, NewCounter: mkCounter,
 			})
+			err = s.tpm.hint(err)
 			if err == nil {
 				if err = formatFS(c, fsKind); err != nil {
 					c.Close()
@@ -515,9 +516,10 @@ func createCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Recovery code (shown once, never stored; write it down):")
 				fmt.Fprintln(cmd.OutOrStdout(), code)
 			}
-			if ctr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "rollback counter: TPM NV index %#08x; give --counter tpm to every command that opens this container\n", ctr.Handle())
+			if c.Info().RollbackProtected {
+				fmt.Fprintf(cmd.ErrOrStderr(), "rollback counter: TPM NV index %#08x; give --counter tpm to every command that opens this container\n", c.Info().CounterHandle)
 				fmt.Fprintln(cmd.ErrOrStderr(), identityLine(c.Info()))
+				fmt.Fprintln(cmd.ErrOrStderr(), authLine(c.Info()))
 			} else {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: no rollback counter: an older copy of this container would be accepted")
 			}
@@ -561,6 +563,7 @@ func infoCmd() *cobra.Command {
 			if i.RollbackProtected {
 				fmt.Fprintf(out, "rollback protected: true (TPM NV counter %#08x: an older copy of this container is refused)\n", i.CounterHandle)
 				fmt.Fprintln(out, identityLine(i))
+				fmt.Fprintln(out, authLine(i))
 			} else {
 				fmt.Fprintln(out, "rollback protected: false (no counter: an older copy of this container would be accepted)")
 			}

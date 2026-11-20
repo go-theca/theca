@@ -81,11 +81,16 @@ func TestCLISwtpmAnotherTPMIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
 	path := filepath.Join(dir, "c.theca")
-	flags := func(d string) []string { return []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", d} }
+	// The counter's authValue is given (not derived), so the test can read it
+	// from outside, as the attacker would have to.
+	ix := secretFile(t, dir, "ix", "index secret\n", 0o600)
+	flags := func(d string) []string {
+		return []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", d, "--tpm-auth-file", ix}
+	}
 	if r := run(nil, append([]string{"create", path, "--size", "1M"}, flags(devA)...)...); r.e != nil || !strings.Contains(r.err, "counter TPM identity: ") {
 		t.Fatalf("create: %v %q", r.e, r.err)
 	}
-	a, err := tpmcounter.Open(tpmcounter.Options{Device: devA, Handle: tpmcounter.First})
+	a, err := tpmcounter.Open(tpmcounter.Options{Device: devA, Handle: tpmcounter.First, Auth: []byte("index secret")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +99,7 @@ func TestCLISwtpmAnotherTPMIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The attacker's TPM: the same handle, raised to the bound.
-	b, err := tpmcounter.Create(tpmcounter.Options{Device: devB})
+	b, err := tpmcounter.Create(tpmcounter.Options{Device: devB, Auth: []byte("index secret")})
 	if err != nil {
 		t.Fatal(err)
 	}

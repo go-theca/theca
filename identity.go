@@ -46,7 +46,7 @@ func identityOf(ctr Counter) ([]byte, error) {
 	}
 	id, err := ic.Identity()
 	if err != nil {
-		return nil, fmt.Errorf("%w: reading the TPM identity: %v", ErrCounterIdentity, err)
+		return nil, fmt.Errorf("%w: reading the TPM identity: %w", ErrCounterIdentity, err)
 	}
 	if len(id) != IDSize {
 		return nil, fmt.Errorf("%w: the TPM identity is %d bytes, want %d", ErrCounterIdentity, len(id), IDSize)
