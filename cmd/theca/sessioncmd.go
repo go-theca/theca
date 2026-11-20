@@ -38,6 +38,8 @@ var (
 	detach     = detachStdio
 	lockFile   = lockContainer
 	executable = os.Executable
+	osPipe     = os.Pipe
+	absPath    = filepath.Abs
 )
 
 const refHelp = "keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or keepassxc:URL (checked, never read; file: is refused)"
@@ -73,7 +75,7 @@ func profileAddCmd() *cobra.Command {
 			"      --password-from 'keepassxc:https://theca.invalid/bio' --device bio",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			abs, err := filepath.Abs(args[1])
+			abs, err := absPath(args[1])
 			if err != nil {
 				return err
 			}
@@ -107,6 +109,8 @@ func profileAddCmd() *cobra.Command {
 	f.IntVar(&p.Hint, "hint", 0, "Argon2id profile the password was created with: 0, 1 or 2")
 	f.StringVar(&p.Counter, "counter", "", "rollback counter: tpm or empty")
 	f.StringVar(&p.TPMDevice, "tpm-device", "", "TPM device: a path, or unix:SOCKET")
+	f.StringVar(&p.TPMAuthFrom, "tpm-auth-from", "", "the counter's authValue, only for a counter made with an explicit one (a derived authValue needs nothing): "+refHelp)
+	f.StringVar(&p.TPMEndorsementFrom, "tpm-endorsement-auth-from", "", "the TPM's endorsement password, if it has one: "+refHelp)
 	f.StringVar(&p.Share, "share", profile.DefaultShare, "share name")
 	f.DurationVar(&p.Sync, "sync", profile.DefaultSync, "commit writes to the container this often")
 	f.BoolVar(&p.CloseOnLock, "close-on-lock", true, "close the container when the screen locks, the machine sleeps or the session ends")
@@ -278,7 +282,7 @@ func spawnDaemon(ctx context.Context, name string, stderr *os.File) (session.Inf
 	if err != nil {
 		return session.Info{}, err
 	}
-	r, w, err := os.Pipe()
+	r, w, err := osPipe()
 	if err != nil {
 		return session.Info{}, err
 	}
@@ -328,6 +332,8 @@ func secretsOf(p profile.Profile) secrets {
 	}
 	s.tpm.counter = p.Counter
 	s.tpm.device = p.TPMDevice
+	s.tpm.authFrom = p.TPMAuthFrom
+	s.tpm.endorsementAuthFrom = p.TPMEndorsementFrom
 	return s
 }
 

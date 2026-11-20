@@ -48,8 +48,13 @@ type Profile struct {
 	Hint         int    // Argon2id profile of the password (0, 1 or 2)
 	Counter      string // "" or "tpm"
 	TPMDevice    string // TPM device path or unix:SOCKET
-	Share        string // share name, default "theca"
-	Sync         time.Duration
+	// TPMAuthFrom is the counter's authValue of a container made with an
+	// explicit one; empty for the usual derived authValue (nothing to store).
+	TPMAuthFrom string
+	// TPMEndorsementFrom is the TPM's endorsement password, empty if it has none.
+	TPMEndorsementFrom string
+	Share              string // share name, default "theca"
+	Sync               time.Duration
 	// CloseOnLock closes the container when the screen locks, the machine
 	// sleeps or the user logs out. Default true.
 	CloseOnLock bool
@@ -137,7 +142,8 @@ func (p Profile) Validate() error {
 			return err
 		}
 	}
-	for _, kv := range [][2]string{{"password-from", p.PasswordFrom}, {"recovery-from", p.RecoveryFrom}, {"pin-from", p.PINFrom}} {
+	for _, kv := range [][2]string{{"password-from", p.PasswordFrom}, {"recovery-from", p.RecoveryFrom}, {"pin-from", p.PINFrom},
+		{"tpm-auth-from", p.TPMAuthFrom}, {"tpm-endorsement-auth-from", p.TPMEndorsementFrom}} {
 		if err := checkRef(kv[0], kv[1]); err != nil {
 			return err
 		}
@@ -148,8 +154,8 @@ func (p Profile) Validate() error {
 	if p.Counter != "" && p.Counter != "tpm" {
 		return fmt.Errorf("counter %q: want tpm or empty", clip(p.Counter))
 	}
-	if p.TPMDevice != "" && p.Counter == "" {
-		return errors.New("tpm-device without counter = \"tpm\"")
+	if (p.TPMDevice != "" || p.TPMAuthFrom != "" || p.TPMEndorsementFrom != "") && p.Counter == "" {
+		return errors.New("tpm-* options without counter = \"tpm\"")
 	}
 	if p.Share == "" {
 		return errors.New("share: empty")
@@ -324,6 +330,10 @@ func (p *Profile) set(key, raw string) error {
 		return str(&p.Counter)
 	case "tpm-device":
 		return str(&p.TPMDevice)
+	case "tpm-auth-from":
+		return str(&p.TPMAuthFrom)
+	case "tpm-endorsement-auth-from":
+		return str(&p.TPMEndorsementFrom)
 	case "share":
 		return str(&p.Share)
 	case "fido2", "close-on-lock":
@@ -392,6 +402,7 @@ func Marshal(ps map[string]Profile) []byte {
 		for _, kv := range [][2]string{
 			{"password-from", p.PasswordFrom}, {"recovery-from", p.RecoveryFrom}, {"pin-from", p.PINFrom},
 			{"device", p.Device}, {"counter", p.Counter}, {"tpm-device", p.TPMDevice},
+			{"tpm-auth-from", p.TPMAuthFrom}, {"tpm-endorsement-auth-from", p.TPMEndorsementFrom},
 		} {
 			if kv[1] != "" {
 				fmt.Fprintf(&sb, "%s = %s\n", kv[0], quote(kv[1]))

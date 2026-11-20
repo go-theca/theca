@@ -17,6 +17,8 @@ func good() Profile {
 	p.Device = "bio"
 	p.Counter = "tpm"
 	p.TPMDevice = "unix:/run/swtpm.sock"
+	p.TPMAuthFrom = "keychain:theca/tpm"
+	p.TPMEndorsementFrom = "keepassxc:https://theca.invalid/ek"
 	p.RecoveryFrom = "keychain:theca/rec"
 	p.PINFrom = "secretservice:theca/pin"
 	p.Hint = 1
@@ -58,6 +60,9 @@ func TestValidate(t *testing.T) {
 		"hint":      func(p *Profile) { p.Hint = 3 },
 		"counter":   func(p *Profile) { p.Counter = "usb" },
 		"tpmdev":    func(p *Profile) { p.Counter = ""; p.TPMDevice = "/dev/x" },
+		"tpmauth":   func(p *Profile) { p.TPMAuthFrom = "file:/x" },
+		"tpmek":     func(p *Profile) { p.TPMEndorsementFrom = "junk" },
+		"tpmonly":   func(p *Profile) { p.Counter = ""; p.TPMDevice = ""; p.TPMAuthFrom = "keychain:a/b" },
 		"share":     func(p *Profile) { p.Share = "" },
 		"sync":      func(p *Profile) { p.Sync = 0 },
 		"synclarge": func(p *Profile) { p.Sync = 2 * time.Hour },

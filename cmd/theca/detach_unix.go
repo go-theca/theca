@@ -17,7 +17,10 @@ var (
 
 // detachStdio cuts the process loose from the terminal that started it. Called
 // once the container is open and the parent has been told.
-func detachStdio() error { return detachTo(&os.Stdin, &os.Stdout, &os.Stderr) }
+func detachStdio() error { return detachTo(stdStreams()...) }
+
+// stdStreams are the process's standard streams; tests point it elsewhere.
+var stdStreams = func() []**os.File { return []**os.File{&os.Stdin, &os.Stdout, &os.Stderr} }
 
 // detachTo ignores the hang-up, starts a session of its own, and points each
 // stream at /dev/null, closing what it held.
