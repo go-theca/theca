@@ -336,8 +336,11 @@ func TestClientBadAnswers(t *testing.T) {
 			c.Write([]byte(tc.answer))
 			c.Close()
 		}()
-		if _, err := Status(context.Background(), p); err == nil {
+		_, err = Status(context.Background(), p)
+		if err == nil {
 			t.Errorf("%s: accepted", tc.name)
+		} else if (tc.name == "garbage" || tc.name == "too-long") && err.Error() == "refused" {
+			t.Errorf("%s: a malformed answer read as a refusal: %v", tc.name, err)
 		}
 		l.Close()
 	}

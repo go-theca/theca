@@ -221,7 +221,7 @@ func TestOpenStatusClose(t *testing.T) {
 	if r := run(nil, "status"); !strings.Contains(r.out, "closed") {
 		t.Fatalf("status after close: %q", r.out)
 	}
-	if r := run(nil, "close", "bio"); r.e == nil || !strings.Contains(r.e.Error(), "not open") {
+	if r := run(nil, "close", "bio"); r.e == nil || r.e.Error() != "bio is not open" {
 		t.Fatalf("second close: %v", r.e)
 	}
 }
@@ -356,21 +356,21 @@ func TestDaemonFailures(t *testing.T) {
 	}
 	// Not started by `theca open`.
 	readyFile = func() *os.File { return nil }
-	if r := run(nil, "_serve", "bio"); r.e == nil {
-		t.Fatal("_serve without a pipe")
+	if r := run(nil, "_serve", "bio"); r.e == nil || !strings.Contains(r.e.Error(), "started by") {
+		t.Fatal("_serve without a pipe:", r.e)
 	}
 	// No socket directory.
 	savedSP := socketPath
 	socketPath = func(string) (string, error) { return "", errors.New("no runtime dir") }
 	report()
-	if r := run(nil, "_serve", "bio"); r.e == nil {
-		t.Fatal("socket path error lost")
+	if r := run(nil, "_serve", "bio"); r.e == nil || !strings.Contains(r.e.Error(), "no runtime dir") {
+		t.Fatal("socket path error lost:", r.e)
 	}
 	socketPath = savedSP
 	// Unknown profile: the error reaches the parent on the pipe.
 	rd, _ := report()
-	if r := run(nil, "_serve", "ghost"); r.e == nil {
-		t.Fatal("unknown profile")
+	if r := run(nil, "_serve", "ghost"); r.e == nil || !strings.Contains(r.e.Error(), "no profile") {
+		t.Fatal("unknown profile:", r.e)
 	}
 	if resp, err := session.DecodeResponse(rd); err != nil || resp.OK || resp.Error == "" {
 		t.Fatalf("parent told %+v %v", resp, err)
@@ -510,8 +510,8 @@ func TestSpawnDaemon(t *testing.T) {
 		t.Fatalf("hang: %v after %v", err, time.Since(start))
 	}
 	executable = func() (string, error) { return "", errors.New("no exe") }
-	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil {
-		t.Fatal("executable error lost")
+	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil || err.Error() != "no exe" {
+		t.Fatal("executable error lost:", err)
 	}
 	executable = func() (string, error) { return filepath.Join(t.TempDir(), "nothing"), nil }
 	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil {

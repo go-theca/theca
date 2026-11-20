@@ -311,6 +311,42 @@ func TestQuoteEscapes(t *testing.T) {
 	}
 }
 
+// Each refusal must be the one asked for, not another that happens to fire later.
+func TestRefusalsNameTheirReason(t *testing.T) {
+	want := func(err error, sub string) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), sub) {
+			t.Errorf("error %v, want it to contain %q", err, sub)
+		}
+	}
+	_, err := Parse(make([]byte, MaxFileBytes+1))
+	want(err, "more than")
+	_, err = Parse([]byte("\xff"))
+	want(err, "UTF-8")
+	_, err = Parse([]byte("[a]\n#" + strings.Repeat("a", MaxLineBytes) + "\n"))
+	want(err, "longer than")
+	_, err = Parse([]byte("[a]\nfile=7\n"))
+	want(err, "want a string")
+
+	dir := t.TempDir()
+	_, err = (Store{Path: filepath.Join(dir, "no", "x")}).Load()
+	if err != nil {
+		t.Errorf("missing parent: %v", err)
+	}
+	file := filepath.Join(dir, "f")
+	os.WriteFile(file, nil, 0o600)
+	_, err = (Store{Path: filepath.Join(file, "x")}).Load()
+	if err == nil || errors.Is(err, os.ErrInvalid) {
+		t.Errorf("open error lost: %v", err)
+	}
+	_, err = (Store{Path: dir}).Load()
+	want(err, "not a regular file")
+	big := filepath.Join(dir, "big.toml")
+	os.WriteFile(big, make([]byte, MaxFileBytes+1), 0o600)
+	_, err = (Store{Path: big}).Load()
+	want(err, "more than")
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add(Marshal(map[string]Profile{"bio": good()}))
 	f.Add([]byte("[a]\nfile=\"/x\"\n"))
