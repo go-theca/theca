@@ -15,6 +15,42 @@ covered in [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md).
 Status: v0.1.0 released ([CHANGELOG](CHANGELOG.md)). Below v1 the format can
 still change: a breaking change bumps the minor version.
 
+## Quick start: one command, one touch
+
+Password from your secret manager plus a hardware key, with nothing new stored:
+
+```sh
+go install github.com/go-theca/theca/cmd/theca@latest
+
+# once: name the container (references only, nothing secret is written)
+theca profile add vault ~/vault/vault.theca \
+    --password-from 'keepassxc:https://theca.invalid/vault' --device bio
+
+# every day
+theca open vault      # asks the manager, waits for one touch, mounts, frees the terminal
+theca status          # what is open, where
+theca close vault     # unmounts, commits, closes
+```
+
+`profile add` checks the syntax of the references and never reads a secret.
+The profile file (`containers.toml`, mode 0600, in the user's configuration
+directory) holds the container's path, `--password-from` / `--recovery-from` /
+`--pin-from` references (`keychain:`, `secretservice:`, `keepassxc:`; `file:` is
+refused), `--device`, `--counter tpm` with `--tpm-device`, `--tpm-auth-from`,
+`--tpm-endorsement-auth-from`, `--share`, `--sync` and `--close-on-lock`. A
+counter whose authValue is derived from the master key (the default since
+v0.19.0) needs no `--tpm-auth-from`; `--counter tpm` stays in the profile, since
+the header can be read only after the unlock.
+
+`open` starts a background process that holds the unlocked container; `close`
+and `status` talk to it over a per-user Unix socket (mode 0600, peer user ID
+checked). A second `open` of the same container is refused. With
+`--close-on-lock` (the default) the container is closed when the screen locks,
+the machine sleeps or the session ends: logind over D-Bus on Linux, the
+session's screen-lock flag and a clock-jump check on macOS. Windows has no
+auto-close yet. `profile list` and `profile remove NAME` list and delete
+profiles (the container and the manager's entries stay).
+
 ## Command line
 
 ```sh

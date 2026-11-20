@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.20.0
+
+- Multi-factor made easy every day: `theca profile add NAME FILE ...` names a container once,
+  `theca open NAME` unlocks it (the password from the secret manager, one touch of the key),
+  mounts it in the file manager and frees the terminal, `theca close NAME` unmounts, commits
+  and closes it, `theca status` says what is open.
+- Profiles are in `containers.toml` under `os.UserConfigDir()/theca` (mode 0600, directory
+  0700) and hold only references: the container path, `password-from` / `recovery-from` /
+  `pin-from` (keychain:, secretservice:, keepassxc:; `file:` refused), `device`, `counter`,
+  `tpm-device`, `tpm-auth-from`, `tpm-endorsement-auth-from`, `share`, `sync`,
+  `close-on-lock`. `profile add` checks the references' syntax and never reads a secret.
+  A file another user can read is refused. The parser is bounded and fuzzed (`FuzzParse`).
+- The background process holds the unlocked container; `close` and `status` reach it over a
+  Unix socket (mode 0600, in a 0700 directory under `$XDG_RUNTIME_DIR/theca` or
+  `os.UserConfigDir()/theca/run`) that checks the peer's user ID (SO_PEERCRED, LOCAL_PEERCRED).
+  A message is one JSON line of at most 4096 bytes; the decoder is fuzzed
+  (`FuzzDecodeRequest`). No secret crosses it. The container file is locked for the life of
+  the process: a second `open` is refused before any unlock or counter increment.
+- `close-on-lock` (default true) closes the container when the screen locks, the machine
+  sleeps or the session ends: Linux asks logind over D-Bus (`Lock`, `LockedHint`,
+  `PrepareForSleep`, `PrepareForShutdown`); macOS reads `CGSSessionScreenIsLocked` every 2 s
+  and detects a sleep as a wall-clock jump the monotonic clock did not make. Windows has
+  neither yet: the container stays open until `close`.
+- New packages `profile` and `session` (the same API a GUI uses).
+
 ## v0.19.0
 
 - A TPM with an endorsement hierarchy password no longer locks its owner out of a pinned

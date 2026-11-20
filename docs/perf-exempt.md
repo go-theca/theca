@@ -49,3 +49,25 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `fido2.Device.Label`: returns a stored string.
 - `tpmcounter.Counter.Identity`: one `TPM2_CreatePrimary` of the ECC P-256 EK plus one `TPM2_FlushContext`, once per mount. Bounded by the TPM's key derivation; there is no C counterpart. Measured on swtpm, 1-minute load 13 (so the time is indicative, the two command count is exact): 0.26 ms against 0.04 ms for `Read` and 0.33 ms for `Increment`. A hardware TPM was not measured.
 - `ShortID`: hex of at most six bytes, for a message.
+- `profile.DefaultPath`: one `os.UserConfigDir` and a join, once per command.
+- `profile.ValidName`: a scan of at most 64 bytes.
+- `profile.New`: fills a struct.
+- `profile.Profile.UsesKey`: a boolean test.
+- `profile.Profile.Validate`: a handful of string checks on a few dozen bytes, once per command.
+- `profile.Parse`: the profile file is at most 1 MiB and in practice a few hundred bytes; read once per command.
+- `profile.Marshal`: the same file written once per `profile add` or `remove`.
+- `profile.Store.Load`: one file read and a `Parse`. Operating-system I/O, interactive.
+- `profile.Store.Save`: an atomic replace of the file. Operating-system I/O, interactive.
+- `profile.Store.Get`: a `Load`.
+- `profile.Store.Add`: a `Load` and a `Save`.
+- `profile.Store.Remove`: a `Load` and a `Save`.
+- `profile.Store.List`: a `Load` and a sort of at most 256 names.
+- `session.SocketPath`: a path join and length check.
+- `session.DecodeRequest`: one line of at most 4096 bytes on a local socket, once per `close` or `status`.
+- `session.DecodeResponse`: one line of at most 4096 bytes, once per `open`, `close` or `status`.
+- `session.Report`: writes one line of at most 4096 bytes.
+- `session.Listen`: creates one Unix socket, once per `open`.
+- `session.Server.Serve`: accepts the connections a person starts with `close` and `status`.
+- `session.Server.Shutdown`: closes the listener and removes the socket file.
+- `session.Status`: one Unix-socket round trip of two short lines.
+- `session.Close`: one Unix-socket round trip; it waits for the unmount and the commit, which are `share.Share.Stop` and `Container.Sync`.
