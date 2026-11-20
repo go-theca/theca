@@ -6,22 +6,22 @@ require (
 	github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8
 	github.com/ebitengine/purego v0.11.3
 	github.com/fxamacker/cbor/v2 v2.10.0
-	github.com/go-authn/fido v0.12.0
+	github.com/go-authn/fido v0.13.1
 	github.com/go-authn/secretsource v0.5.0
-	github.com/go-encryptions/argon2 v0.1.0
-	github.com/go-encryptions/ctr v0.1.1
-	github.com/go-fileshare/automount v0.1.1
+	github.com/go-encryptions/argon2 v0.1.1
+	github.com/go-encryptions/ctr v0.1.2
+	github.com/go-fileshare/automount v0.1.2
 	github.com/go-filesystems/exfat v0.7.0
-	github.com/go-filesystems/smb v0.16.1
+	github.com/go-filesystems/smb v0.17.0
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/go-mswin/webauthn v0.5.0
-	github.com/go-scikit/refbench v0.3.0
+	github.com/go-scikit/refbench v0.4.1
 	github.com/go-tpm2/devtpm v0.3.0
 	github.com/go-tpm2/tpm2 v0.12.0
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.10
+	github.com/spf13/pflag v1.1.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
