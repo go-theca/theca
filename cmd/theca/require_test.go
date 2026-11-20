@@ -242,6 +242,47 @@ func TestSlotsRemoveWithTheKey(t *testing.T) {
 	}
 }
 
+// Each refusal names the flag and the value it refused, so the person knows
+// which of the two sets is wrong, and none of them asks the key.
+func TestSlotsRemoveNamesTheSetThatIsWrong(t *testing.T) {
+	path, pw, rc, pin, k := anyContainer(t)
+	if r := run(nil, "enroll-key", path, "--password-file", pw, "--recovery-file", rc, "--pin-file", pin); r.e != nil {
+		t.Fatal(r.e)
+	}
+	k.pins = nil
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"bad remove":         {[]string{"--remove", "fido2", "--keep", "password"}, `--remove "fido2": a key opens`},
+		"bad keep":           {[]string{"--remove", "password", "--keep", "key"}, `--keep "key": want `},
+		"remove not given":   {[]string{"--remove", "password"}, "give --remove and --keep"},
+		"keep not given":     {[]string{"--keep", "password"}, "give --remove and --keep"},
+		"remove twice named": {[]string{"--remove", "password+password", "--keep", "recovery"}, "password twice"},
+	} {
+		r := run(nil, append([]string{"slots", "remove", path, "--password-file", pw, "--pin-file", pin}, tc.args...)...)
+		if r.e == nil || !strings.Contains(r.e.Error(), tc.want) {
+			t.Errorf("%s: %v (want %q)", name, r.e, tc.want)
+		}
+	}
+	// A factor that was not presented: named, per side, before the key is asked.
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"remove side": {[]string{"--remove", "recovery+fido2", "--keep", "password"}, "--remove recovery+fido2 needs the recovery code: give --recovery-file"},
+		"keep side":   {[]string{"--remove", "password", "--keep", "recovery+fido2"}, "--keep recovery+fido2 needs the recovery code: give --recovery-file"},
+	} {
+		r := run(nil, append([]string{"slots", "remove", path, "--password-file", pw, "--pin-file", pin}, tc.args...)...)
+		if r.e == nil || r.e.Error() != tc.want {
+			t.Errorf("%s: %v (want %q)", name, r.e, tc.want)
+		}
+	}
+	if len(k.pins) != 0 {
+		t.Fatalf("the key was touched %d times by refusals that need no key", len(k.pins))
+	}
+}
+
 func TestParseSet(t *testing.T) {
 	for in, want := range map[string]factorSet{
 		"password":          {kinds: []string{"pw"}},
