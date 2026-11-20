@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.17.1
+
+- Fix: the help showed `--device fido list` — pflag takes the first backquoted text of a
+  usage string as the value name. It reads `--device ID` again (an id or a key name), and a
+  test walks every flag of every command and refuses a value name that is not one word.
+
 ## v0.17.0
 
 - `enroll-key` says, after pairing, which factors still open the container alone (the

@@ -241,7 +241,7 @@ func (s *secrets) recoveryFlag(cmd *cobra.Command) {
 // which key (--device), because with several keys attached the first is not a
 // choice.
 func (s *secrets) pinFlag(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&s.device, "device", "", "use the security key with this id (`fido list` prints them); with several attached and none named, touch the one to use")
+	cmd.Flags().StringVar(&s.device, "device", "", "use the security key with this `ID` or name (fido list prints them); with several attached and none named, touch the one to use")
 	cmd.Flags().StringVar(&s.pinFile, "pin-file", "", "read the security key's PIN from this file (mode 0600 or stricter) instead of the terminal; unused by a key with a fingerprint")
 	cmd.Flags().StringVar(&s.pinFrom, "pin-from", "", "read the security key's PIN"+fromHelp+"; unused by a key with a fingerprint")
 	cmd.MarkFlagsMutuallyExclusive("pin-file", "pin-from")
