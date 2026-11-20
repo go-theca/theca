@@ -80,6 +80,8 @@ func (f *tpmFlags) flags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.acceptRollback, "accept-rollback", false, "rebind a container older than the counter to the counter's value (loud: an old copy is accepted as current)")
 	cmd.MarkFlagsMutuallyExclusive("tpm-auth-file", "tpm-auth-from")
 	cmd.MarkFlagsMutuallyExclusive("tpm-owner-auth-file", "tpm-owner-auth-from")
+	deprecateFile(cmd, "tpm-auth-file", "tpm-auth-from")
+	deprecateFile(cmd, "tpm-owner-auth-file", "tpm-owner-auth-from")
 }
 
 // explicitAuth reports whether the counter's authValue is given by the user
@@ -118,7 +120,7 @@ func (f *tpmFlags) options(ctx context.Context, owner bool) (tpmcounter.Options,
 	var err error
 	switch {
 	case f.authFrom != "":
-		o.Auth, err = readRef(ctx, f.authFrom)
+		o.Auth, err = readManager(ctx, "tpm-auth-from", f.authFrom)
 	case f.authFile != "":
 		o.Auth, err = readSecretFile(f.authFile)
 	}

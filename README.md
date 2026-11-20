@@ -59,15 +59,21 @@ go install github.com/go-theca/theca/cmd/theca@latest
 theca create vault.theca --size 1G            # asks the password twice, prints the recovery code once
 theca info   vault.theca                      # unlock and describe
 theca verify vault.theca                      # authenticate every sector and tree node
-theca import vault.theca --password-file pw --offset 0 < disk.img
-theca export vault.theca --password-file pw > disk.img
+theca import vault.theca --password-from keychain:theca/vault --offset 0 < disk.img
+theca export vault.theca --password-from keychain:theca/vault > disk.img
 ```
 
 - **Secrets never go in arguments or environment variables.** The password is
-  read from the terminal with echo off, or from `--password-file`. The recovery
-  code is read from `--recovery-file`. Both files must be regular files that
-  only their owner can read (mode `0600` or stricter); anything else is refused.
-- **Or from a secret manager, so no plaintext file sits on disk.**
+  read from the terminal with echo off, or from a secret manager (next item).
+- **Secret files are deprecated (v0.21.0).** `--password-file`, `--recovery-file`,
+  `--pin-file`, `--tpm-auth-file` and `--tpm-owner-auth-file` still work (a regular
+  file, mode `0600` or stricter) but are hidden from the help, and each use prints
+  a warning on standard error that names the `--X-from` replacement. So does a
+  `file:` reference in `--password-from`, `--recovery-from` and `--pin-from`.
+  `--tpm-auth-from` refuses `file:`, like the other TPM flags. A plaintext file
+  beside a container protected by hardware keys defeats them. Scripts keep
+  working; move them to a manager before the files are removed.
+- **From a secret manager, so no plaintext file sits on disk.**
   `--password-from`, `--recovery-from` and `--pin-from` (the FIDO2 key's PIN) take
   a reference: `keychain:SERVICE/ACCOUNT` (macOS Keychain),
   `secretservice:SERVICE/ACCOUNT` or `secretservice:KEY=VALUE,...` (GNOME
@@ -76,7 +82,7 @@ theca export vault.theca --password-file pw > disk.img
   browser-integration socket; the reference is the URL field of the entry: enable
   it, run `secretsource keepassxc associate` once and approve it in KeePassXC.
   Lookups by UUID or path are refused: KeePassXC 2.8.0 crashes on an entry without
-  a URL) or `file:PATH`. A reference holds no secret, and
+  a URL); `file:PATH` still works there but is deprecated. A reference holds no secret, and
   no scheme runs a command. Each excludes the `-file` flag of the same secret.
   See [go-authn/secretsource](https://github.com/go-authn/secretsource).
 
@@ -309,7 +315,8 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tp
   (`create`, `counter rebind`) and `--tpm-endorsement-auth-from REF` (`create`,
   `counter rebind` and **every mount**, only on a TPM whose endorsement
   hierarchy has a password) take `keychain:`, `secretservice:` or `keepassxc:`
-  references; a `file:` reference is refused. `--tpm-owner-auth-file` and
+  references; a `file:` reference is refused (`--tpm-auth-from` too, since
+  v0.21.0). `--tpm-owner-auth-file` and
   `--tpm-auth-file` still work (0600 or stricter) and are deprecated. Never
   arguments or environment variables. Without `--tpm-endorsement-auth-from` on
   such a TPM a pinned container is refused, and the message names the flag. A

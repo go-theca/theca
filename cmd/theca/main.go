@@ -194,7 +194,33 @@ type secrets struct {
 }
 
 // fromHelp is the common tail of the --X-from help texts.
-const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT, keepassxc:URL (the entry's URL field) or file:PATH"
+const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or keepassxc:URL (the entry's URL field); file:PATH still works but is deprecated"
+
+// deprecateFile hides a secret file flag from the help and warns on standard
+// error, naming the replacement, whenever it is used. (cobra's own
+// MarkDeprecated prints on standard output when a command has an output
+// writer, which would corrupt what create and export print.) No command here
+// has a PreRun of its own, so the warning owns PreRunE.
+func deprecateFile(cmd *cobra.Command, file, from string) {
+	cmd.Flags().MarkHidden(file)
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if c.Flags().Changed(file) {
+			fmt.Fprintf(c.ErrOrStderr(), "Flag --%s is deprecated: a secret file beside the container's other factors defeats them; use --%s with keychain:, secretservice: or keepassxc:\n", file, from)
+		}
+		if prev != nil {
+			return prev(c, args)
+		}
+		return nil
+	}
+}
+
+// warnFileRef warns when a --X-from reference is a file: one.
+func warnFileRef(cmd *cobra.Command, flag, ref string) {
+	if r, err := secretsource.Parse(ref); err == nil && r.Scheme == "file" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Flag --%s: a file: reference is deprecated, use keychain:, secretservice: or keepassxc:\n", flag)
+	}
+}
 
 // passwordGiven reports whether the password comes from a file or a manager.
 func (s *secrets) passwordGiven() bool { return s.passwordFile != "" || s.passwordFrom != "" }
@@ -204,9 +230,10 @@ func (s *secrets) recoveryGiven() bool { return s.recoveryFile != "" || s.recove
 
 // source reads a secret from a file or a reference; ok is false when neither
 // was given.
-func (s *secrets) source(cmd *cobra.Command, file, from string) (b []byte, ok bool, err error) {
+func (s *secrets) source(cmd *cobra.Command, name, file, from string) (b []byte, ok bool, err error) {
 	switch {
 	case from != "":
+		warnFileRef(cmd, name+"-from", from)
 		b, err = readRef(cmd.Context(), from)
 		return b, true, err
 	case file != "":
@@ -221,6 +248,7 @@ func (s *secrets) flags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.passwordFile, "password-file", "", "read the password from this file (mode 0600 or stricter) instead of the terminal")
 	cmd.Flags().StringVar(&s.passwordFrom, "password-from", "", "read the password"+fromHelp)
 	cmd.MarkFlagsMutuallyExclusive("password-file", "password-from")
+	deprecateFile(cmd, "password-file", "password-from")
 	cmd.Flags().IntVar(&s.hint, "hint", 0, "Argon2id profile the password was created with: 0, 1 or 2 (DESIGN 6.1)")
 }
 
@@ -235,6 +263,7 @@ func (s *secrets) recoveryFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.recoveryFile, "recovery-file", "", "also present the recovery code read from this file (mode 0600 or stricter)")
 	cmd.Flags().StringVar(&s.recoveryFrom, "recovery-from", "", "also present the recovery code read"+fromHelp)
 	cmd.MarkFlagsMutuallyExclusive("recovery-file", "recovery-from")
+	deprecateFile(cmd, "recovery-file", "recovery-from")
 }
 
 // pinFlag adds the flags of the security-key commands: the PIN source and
@@ -245,13 +274,14 @@ func (s *secrets) pinFlag(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.pinFile, "pin-file", "", "read the security key's PIN from this file (mode 0600 or stricter) instead of the terminal; unused by a key with a fingerprint")
 	cmd.Flags().StringVar(&s.pinFrom, "pin-from", "", "read the security key's PIN"+fromHelp+"; unused by a key with a fingerprint")
 	cmd.MarkFlagsMutuallyExclusive("pin-file", "pin-from")
+	deprecateFile(cmd, "pin-file", "pin-from")
 }
 
 // keyPIN returns the function the key asks for its PIN through, only when
 // it has no built-in verification.
 func (s *secrets) keyPIN(cmd *cobra.Command) func() (string, error) {
 	return func() (string, error) {
-		b, ok, err := s.source(cmd, s.pinFile, s.pinFrom)
+		b, ok, err := s.source(cmd, "pin", s.pinFile, s.pinFrom)
 		if !ok {
 			b, err = readTerminal(cmd, "Security key PIN: ")
 		}
@@ -280,7 +310,7 @@ var openFIDO = func(ctx context.Context, pin func() (string, error), device stri
 func printNotice(m string) { fmt.Fprintln(os.Stderr, m) }
 
 func (s *secrets) password(cmd *cobra.Command, prompt string) ([]byte, error) {
-	if b, ok, err := s.source(cmd, s.passwordFile, s.passwordFrom); ok {
+	if b, ok, err := s.source(cmd, "password", s.passwordFile, s.passwordFrom); ok {
 		return b, err
 	}
 	return readTerminal(cmd, prompt)
@@ -305,7 +335,7 @@ func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 		u.FIDO = dev
 		fmt.Fprintln(cmd.ErrOrStderr(), "Touch the security key when it blinks.")
 	}
-	if rc, ok, err := s.source(cmd, s.recoveryFile, s.recoveryFrom); ok {
+	if rc, ok, err := s.source(cmd, "recovery", s.recoveryFile, s.recoveryFrom); ok {
 		if err != nil {
 			return u, wipe, err
 		}
