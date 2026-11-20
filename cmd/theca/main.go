@@ -348,6 +348,8 @@ func open(cmd *cobra.Command, path string, s *secrets, write bool) (*theca.Conta
 	}
 	if !c.Info().RollbackProtected {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: this container has no rollback counter: an older copy of it would be accepted")
+	} else if c.Info().CounterTPM == nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+unpinned)
 	}
 	return c, f, nil
 }
@@ -515,6 +517,7 @@ func createCmd() *cobra.Command {
 			}
 			if ctr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rollback counter: TPM NV index %#08x; give --counter tpm to every command that opens this container\n", ctr.Handle())
+				fmt.Fprintln(cmd.ErrOrStderr(), identityLine(c.Info()))
 			} else {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: no rollback counter: an older copy of this container would be accepted")
 			}
@@ -557,6 +560,7 @@ func infoCmd() *cobra.Command {
 			fmt.Fprintf(out, "journal entries:    %d\n", i.JournalEntries)
 			if i.RollbackProtected {
 				fmt.Fprintf(out, "rollback protected: true (TPM NV counter %#08x: an older copy of this container is refused)\n", i.CounterHandle)
+				fmt.Fprintln(out, identityLine(i))
 			} else {
 				fmt.Fprintln(out, "rollback protected: false (no counter: an older copy of this container would be accepted)")
 			}

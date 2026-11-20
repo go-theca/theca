@@ -286,6 +286,7 @@ type Info struct {
 	SlotsUsed           int
 	RollbackProtected   bool
 	CounterHandle       uint32 // the counter's handle; 0 when RollbackProtected is false
+	CounterTPM          []byte // identity of the TPM the counter is pinned to; nil when RollbackProtected is false or the container predates the pin
 	JournalEntries      uint32
 	ReplayedTransaction bool
 }
@@ -442,6 +443,10 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 		}
 	}
 	if o.Counter != nil {
+		id, err := identityOf(o.Counter) // before the increment: no identity, no counter moved
+		if err != nil {
+			return nil, "", err
+		}
 		if err := o.Counter.Increment(); err != nil {
 			return nil, "", err
 		}
@@ -449,7 +454,7 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 		if err != nil {
 			return nil, "", err
 		}
-		c.body.Counter = &format.Counter{Handle: o.Counter.Handle(), Name: o.Counter.Name(), Bound: c0}
+		c.body.Counter = &format.Counter{Handle: o.Counter.Handle(), Name: o.Counter.Name(), Bound: c0, TPMID: id}
 		c.info.RollbackProtected = true
 		c.info.CounterHandle = o.Counter.Handle()
 	}
@@ -491,8 +496,10 @@ func (c *Container) fillInfo() {
 	c.info.JournalEntries = c.body.JournalEntries
 	c.info.RollbackProtected = c.body.Counter != nil
 	c.info.CounterHandle = 0
+	c.info.CounterTPM = nil
 	if c.body.Counter != nil {
 		c.info.CounterHandle = c.body.Counter.Handle
+		c.info.CounterTPM = c.body.Counter.TPMID
 	}
 }
 

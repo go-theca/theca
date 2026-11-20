@@ -103,7 +103,15 @@ type Counter struct {
 	Handle uint32
 	Name   []byte
 	Bound  uint64
+	// TPMID is the identity of the TPM the counter lives on (DESIGN 5.4.1):
+	// the digest of that TPM's endorsement key Name, IDSize bytes. Nil for a
+	// container made before the identity existed; any other length is not a
+	// header this package writes or accepts.
+	TPMID []byte
 }
+
+// IDSize is the size of Counter.TPMID: a SHA-256 digest.
+const IDSize = 32
 
 // Body is the authenticated, encrypted header body.
 type Body struct {
@@ -120,6 +128,7 @@ const (
 	version  = 1
 	suiteTA1 = 1
 	flagCtr  = 1
+	flagID   = 2 // the counter record carries TPMID (only with flagCtr)
 )
 
 // Marshal returns exactly BodySize bytes.
@@ -138,6 +147,10 @@ func (b *Body) Marshal() []byte {
 		p[78] = byte(len(c.Name))
 		copy(p[79:143], c.Name)
 		binary.LittleEndian.PutUint64(p[143:], c.Bound)
+		if len(c.TPMID) == IDSize {
+			p[2] |= flagID
+			copy(p[151:151+IDSize], c.TPMID)
+		}
 	}
 	return p
 }
@@ -147,7 +160,7 @@ func ParseBody(p []byte, fileSize uint64) (*Body, Geometry, error) {
 	if len(p) != BodySize {
 		return nil, Geometry{}, fmt.Errorf("%w: %d bytes", ErrBody, len(p))
 	}
-	if p[0] != version || p[1] != suiteTA1 || p[2]&^flagCtr != 0 || p[3] != 0 {
+	if p[0] != version || p[1] != suiteTA1 || p[2]&^(flagCtr|flagID) != 0 || p[3] != 0 {
 		return nil, Geometry{}, fmt.Errorf("%w: unknown version, suite or flags", ErrBody)
 	}
 	b := &Body{
@@ -167,6 +180,9 @@ func ParseBody(p []byte, fileSize uint64) (*Body, Geometry, error) {
 			Handle: binary.LittleEndian.Uint32(p[74:]),
 			Name:   append([]byte(nil), p[79:79+n]...),
 			Bound:  binary.LittleEndian.Uint64(p[143:]),
+		}
+		if p[2]&flagID != 0 {
+			b.Counter.TPMID = append([]byte(nil), p[151:151+IDSize]...)
 		}
 	}
 	// One byte string per body: whatever the fields above did not read

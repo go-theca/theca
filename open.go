@@ -236,7 +236,8 @@ type counterGate struct {
 	finish bool   // b == c+1: an earlier mount crashed before its increment
 	base   uint64 // the counter value once any unfinished increment is done
 	ctr    Counter
-	rebind bool // bind the header to a new counter (OpenOptions.RebindFor)
+	rebind bool   // bind the header to a new counter (OpenOptions.RebindFor)
+	id     []byte // rebind: the identity of the new counter's TPM, nil if it has none
 }
 
 // checkCounter runs the read-only half of the mount protocol of DESIGN 5.4:
@@ -254,7 +255,13 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 		if err != nil {
 			return counterGate{}, err
 		}
-		return counterGate{bound: true, rebind: true, ctr: ctr}, nil
+		// The new binding pins the identity of the TPM the new counter is on
+		// (a counter that cannot say leaves the header unpinned).
+		id, err := identityOf(ctr)
+		if err != nil {
+			return counterGate{}, err
+		}
+		return counterGate{bound: true, rebind: true, ctr: ctr, id: id}, nil
 	}
 	if b == nil {
 		return counterGate{}, nil // "rollback-unprotected": Info.RollbackProtected is false
@@ -268,6 +275,11 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 	}
 	if ctr == nil || ctr.Handle() != b.Handle || !bytes.Equal(ctr.Name(), b.Name) {
 		return counterGate{}, ErrCounter
+	}
+	// Whose TPM is it? Asked before the value is read: a value read from
+	// another TPM decides nothing (DESIGN 5.4.1).
+	if err := checkIdentity(ctr, b.TPMID); err != nil {
+		return counterGate{}, err
 	}
 	cur, err := ctr.Read()
 	if err != nil {
@@ -305,7 +317,7 @@ func (c *Container) bindCounter(g counterGate) error {
 		if err != nil {
 			return err
 		}
-		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0}
+		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0, TPMID: g.id}
 		c.mu.Lock()
 		err = c.commitLocked("rebind counter")
 		c.mu.Unlock()
@@ -320,7 +332,7 @@ func (c *Container) bindCounter(g counterGate) error {
 		return fmt.Errorf("%w: counter exhausted", ErrCounter)
 	}
 	b := c.body.Counter
-	c.body.Counter = &format.Counter{Handle: b.Handle, Name: b.Name, Bound: g.base + 1}
+	c.body.Counter = &format.Counter{Handle: b.Handle, Name: b.Name, Bound: g.base + 1, TPMID: b.TPMID}
 	c.mu.Lock()
 	err := c.commitLocked("bind counter")
 	c.mu.Unlock()

@@ -278,20 +278,44 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # t
   moment**: nothing is checked against the old counter. An old copy of the
   container shows the same refusal as a reset TPM: do not rebind to open one. `--accept-rollback` is another thing: it needs a counter that
   exists and is ahead of the container.
-- **Threat model.** The counter protects against someone who can replace the
-  container file but not control the TPM it is bound to. The container
-  records a counter's handle and its NV Name, which covers type and
-  attributes, not the TPM: whoever controls the TPM used (the host of a
-  virtual TPM, a software TPM whose state sits on the same storage as the
-  container, a replaced TPM) can define an index with the same Name and bring
-  it to a value at or above an old bound. Pinning a TPM's identity is not
-  done (go-theca/theca#39). The counter index
-  has `NO_DA`: a wrong authValue file does not count towards the TPM's
-  lockout.
-- Library: `tpmcounter.Create`, `tpmcounter.Open`, `OpenOptions.CounterFor`,
-  `OpenOptions.RebindFor`. Built on go-tpm2/tpm2 v0.10.0 `NVDefineCounter`,
-  `NVIncrementAuth`, `NVReadCounter`. Counters defined by v0.9.0 (without
-  `NO_DA`) are still recognized. One counter per container.
+- **The TPM is pinned (v0.18.0).** `create` and `counter rebind` record, in
+  the authenticated header, the identity of the TPM the counter is on: the
+  digest of the Name of its endorsement key (the EK Credential Profile ECC
+  P-256 template, created transiently and flushed, never persistent). Every
+  mount compares it **before reading the counter**; a counter on another TPM
+  is refused, naming both identities (first 6 bytes in hex) and the recovery:
+  `theca counter rebind`, only if you really replaced the TPM. `info` shows
+  `counter TPM identity: <hex>`. It needs the endorsement authValue to be empty
+  (the default); otherwise the mount is refused. Containers made before
+  v0.18.0 carry no identity: they **open as before, with a warning** at every
+  mount, until `theca counter rebind` pins them (it replaces the counter, so
+  protection restarts from that moment).
+- **Threat model**, by attacker.
+  - *Replaces the container file with an older copy* (a stolen backup, a
+    sync client): stopped by the counter, as before.
+  - *Brings another TPM* (a fresh software TPM, a replaced TPM, another
+    machine's) and defines the same index on it at the old bound: stopped
+    since v0.18.0, by the pinned identity. Not stopped in a container made
+    before v0.18.0 and not rebound.
+  - *Controls the TPM in use*: the host of a virtual TPM, a program standing
+    between theca and the TPM (a replaced device or socket). **Not stopped.**
+    The identity names a TPM, it does not prove that the TPM answering is that
+    one: the EK public is not secret and whoever is the TPM can present it.
+  - *Holds a copy of the TPM's state* (a software TPM's state directory, a VM
+    snapshot): it holds the endorsement seed, so it is the same TPM, and it
+    can roll the counter back with the state. **Not stopped.**
+  - *Forges the answers on the bus to a discrete TPM*: not stopped.
+    `TPM2_NV_Certify` under an attestation key would authenticate the answers;
+    it was weighed and deferred (DESIGN 5.4.1), because it does not change the
+    outcome against the other attackers.
+
+  The counter index has `NO_DA`: a wrong authValue file does not count
+  towards the TPM's lockout.
+- Library: `tpmcounter.Create`, `tpmcounter.Open`, `tpmcounter.Counter.Identity`
+  (`theca.IdentifiedCounter`), `OpenOptions.CounterFor`, `OpenOptions.RebindFor`.
+  Built on go-tpm2/tpm2 v0.11.0 `NVDefineCounter`, `NVIncrementAuth`,
+  `NVReadCounter`, `EKIdentity`. Counters defined by v0.9.0 (without `NO_DA`) are
+  still recognized. One counter per container.
 
 Not in this version: the TPM counter on Windows, slot management for FIDO2
 factor sets on the command line (`slots` handles the

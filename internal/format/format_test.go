@@ -102,6 +102,75 @@ func TestBodyRoundTrip(t *testing.T) {
 	}
 }
 
+// The TPM identity rides in the authenticated body (flag 2, bytes 151..183).
+func TestBodyTPMID(t *testing.T) {
+	id := bytes.Repeat([]byte{0x5c}, IDSize)
+	b := sampleBody()
+	b.Counter = &Counter{Handle: 0x01800001, Name: bytes.Repeat([]byte{0xab}, 34), Bound: 9, TPMID: id}
+	p := b.Marshal()
+	if p[2] != flagCtr|flagID || !bytes.Equal(p[151:183], id) {
+		t.Fatalf("flags %#x, id area %x", p[2], p[151:183])
+	}
+	got, _, err := ParseBody(p, 1<<40)
+	if err != nil || !bytes.Equal(got.Counter.TPMID, id) || got.Counter.Bound != 9 {
+		t.Fatalf("round trip: %+v %v", got, err)
+	}
+	// Without it the body is the v0.10 body: no flag, zero area.
+	b.Counter.TPMID = nil
+	p = b.Marshal()
+	got, _, err = ParseBody(p, 1<<40)
+	if err != nil || p[2] != flagCtr || got.Counter.TPMID != nil || !bytes.Equal(p[151:183], make([]byte, IDSize)) {
+		t.Fatalf("no identity: %+v %v", got, err)
+	}
+	// An identity of the wrong length is not written: there is no half pin.
+	b.Counter.TPMID = id[:31]
+	if p = b.Marshal(); p[2] != flagCtr {
+		t.Fatalf("a 31-byte identity set the flag: %#x", p[2])
+	}
+
+	// The header check names what it refused: each of these is caught by the
+	// version/suite/flags check itself, not only by the canonical-form check
+	// behind it (which would refuse them too, with another message).
+	for name, f := range map[string]func(p []byte){
+		"version":       func(p []byte) { p[0] = 2 },
+		"suite":         func(p []byte) { p[1] = 9 },
+		"unknown flag":  func(p []byte) { p[2] = 0x80 },
+		"flag 4":        func(p []byte) { p[2] = flagCtr | flagID | 4 },
+		"reserved byte": func(p []byte) { p[3] = 1 },
+	} {
+		q := append([]byte(nil), sampleBody().Marshal()...)
+		f(q)
+		if _, _, err := ParseBody(q, 1<<50); err == nil || !strings.Contains(err.Error(), "unknown version, suite or flags") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// Refusals: every way the field can be wrong is refused, never partly read.
+	withID := func() []byte {
+		b.Counter.TPMID = id
+		return b.Marshal()
+	}
+	mut := func(f func(p []byte)) []byte { p := withID(); f(p); return p }
+	cases := map[string][]byte{
+		"id flag without a counter": mut(func(p []byte) { clear(p[72:]); p[2] = flagID }),
+		"id area, no id flag":       mut(func(p []byte) { p[2] = flagCtr }),
+		"id area bytes beyond 32":   mut(func(p []byte) { p[183] = 1 }),
+		"unknown flag with id":      mut(func(p []byte) { p[2] |= 4 }),
+	}
+	for name, p := range cases {
+		if _, _, err := ParseBody(p, 1<<50); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// A flipped bit in the identity is a different identity, not an error: the
+	// authentication of the header is what protects it.
+	p = withID()
+	p[151] ^= 1
+	if got, _, err := ParseBody(p, 1<<50); err != nil || bytes.Equal(got.Counter.TPMID, id) {
+		t.Fatalf("flipped identity: %v", err)
+	}
+}
+
 func TestParseBodyRefusals(t *testing.T) {
 	good := sampleBody().Marshal()
 	mut := func(f func(p []byte)) []byte {
@@ -298,6 +367,9 @@ func TestRecoveryCode(t *testing.T) {
 
 func FuzzParseBody(f *testing.F) {
 	f.Add(sampleBody().Marshal())
+	pinned := sampleBody()
+	pinned.Counter = &Counter{Handle: 1, Name: []byte{0, 0x0b, 1}, Bound: 3, TPMID: bytes.Repeat([]byte{7}, IDSize)}
+	f.Add(pinned.Marshal()) // the identity field (DESIGN 5.4.1)
 	f.Add([]byte{})
 	f.Add(make([]byte, BodySize))
 	f.Fuzz(func(t *testing.T, p []byte) {

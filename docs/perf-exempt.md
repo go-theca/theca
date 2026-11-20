@@ -47,3 +47,5 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `fido2.WithNotice`: stores one function pointer in an option.
 - `fido2.WithDevice`: stores one string in an option.
 - `fido2.Device.Label`: returns a stored string.
+- `tpmcounter.Counter.Identity`: one `TPM2_CreatePrimary` of the ECC P-256 EK plus one `TPM2_FlushContext`, once per mount. Bounded by the TPM's key derivation; there is no C counterpart. Measured on swtpm, 1-minute load 13 (so the time is indicative, the two command count is exact): 0.26 ms against 0.04 ms for `Read` and 0.33 ms for `Increment`. A hardware TPM was not measured.
+- `ShortID`: hex of at most six bytes, for a message.

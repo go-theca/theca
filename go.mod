@@ -17,7 +17,7 @@ require (
 	github.com/go-mswin/webauthn v0.5.0
 	github.com/go-scikit/refbench v0.3.0
 	github.com/go-tpm2/devtpm v0.3.0
-	github.com/go-tpm2/tpm2 v0.10.0
+	github.com/go-tpm2/tpm2 v0.11.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/crypto v0.59.0
