@@ -14,6 +14,7 @@
 package tpmcounter
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -275,7 +276,7 @@ func (c *Counter) Identity() ([]byte, error) {
 		}
 		// 0x000B (SHA-256) || 32-byte digest: anything else is not the Name
 		// of the template asked for, and is not hashed into an identity.
-		if len(name) != 2+IDSize || name[0] != 0x00 || name[1] != 0x0B {
+		if len(name) != 2+IDSize || !bytes.HasPrefix(name, []byte{0x00, 0x0B}) {
 			return fmt.Errorf("%w: the EK Name is %d bytes, want 34 starting 000b", ErrIdentity, len(name))
 		}
 		id = append([]byte(nil), name[2:]...)

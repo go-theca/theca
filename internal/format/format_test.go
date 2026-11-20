@@ -128,6 +128,23 @@ func TestBodyTPMID(t *testing.T) {
 		t.Fatalf("a 31-byte identity set the flag: %#x", p[2])
 	}
 
+	// The header check names what it refused: each of these is caught by the
+	// version/suite/flags check itself, not only by the canonical-form check
+	// behind it (which would refuse them too, with another message).
+	for name, f := range map[string]func(p []byte){
+		"version":       func(p []byte) { p[0] = 2 },
+		"suite":         func(p []byte) { p[1] = 9 },
+		"unknown flag":  func(p []byte) { p[2] = 0x80 },
+		"flag 4":        func(p []byte) { p[2] = flagCtr | flagID | 4 },
+		"reserved byte": func(p []byte) { p[3] = 1 },
+	} {
+		q := append([]byte(nil), sampleBody().Marshal()...)
+		f(q)
+		if _, _, err := ParseBody(q, 1<<50); err == nil || !strings.Contains(err.Error(), "unknown version, suite or flags") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
 	// Refusals: every way the field can be wrong is refused, never partly read.
 	withID := func() []byte {
 		b.Counter.TPMID = id

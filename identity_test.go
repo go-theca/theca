@@ -87,9 +87,17 @@ func TestIdentityPinnedAtCreateAndCheckedAtMount(t *testing.T) {
 	broken.name, broken.idErr = a.name, errors.New("endorsement auth set")
 	short := newIDCounter(0xA1, a.v)
 	short.name, short.id = a.name, []byte{1, 2, 3}
-	for name, ctr := range map[string]Counter{"not identified": plain, "identity error": broken, "wrong size": short} {
-		if _, err := Open(ctx, f, u, OpenOptions{Counter: ctr}); !errors.Is(err, ErrCounterIdentity) {
-			t.Errorf("%s: %v", name, err)
+	for name, c := range map[string]struct {
+		ctr  Counter
+		want string
+	}{
+		"not identified": {plain, "cannot report its TPM identity"},
+		"identity error": {broken, "reading the TPM identity"},
+		"wrong size":     {short, "3 bytes, want 32"},
+	} {
+		_, err := Open(ctx, f, u, OpenOptions{Counter: c.ctr})
+		if !errors.Is(err, ErrCounterIdentity) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", name, err, c.want)
 		}
 	}
 	if !strings.Contains(func() string { _, e := Open(ctx, f, u, OpenOptions{Counter: broken}); return e.Error() }(), "endorsement auth set") {
