@@ -243,9 +243,9 @@ Design and trade-offs: [docs/HARDWARE-KEYS.md](docs/HARDWARE-KEYS.md) §9
 ```sh
 theca create vault.theca --size 1G --counter tpm                 # defines an NV counter, binds the container to it
 theca info   vault.theca --counter tpm                           # rollback protected: true (TPM NV counter 0x01500000 ...)
-theca create v2.theca --size 1G --counter tpm --tpm-auth-file ix --tpm-owner-auth-file owner
+theca create v2.theca --size 1G --counter tpm --tpm-owner-auth-from keychain:tpm/owner --tpm-endorsement-auth-from keychain:tpm/endorsement
 theca info   vault.theca --counter tpm --accept-rollback          # accept an older copy on purpose (loud); needs the counter
-theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # the counter is gone: bind to a new one
+theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tpm/owner   # the counter is gone: bind to a new one
 ```
 
 - The counter advances once per mount, not per commit. An older copy of the
@@ -253,7 +253,7 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # t
   is written; the copy taken during the current session is the window that
   stays open (DESIGN §5.4).
 - Every command that opens the container needs `--counter tpm` again (and
-  `--tpm-auth-file` if you set one), **and opens the file read-write**, because
+  `--tpm-auth-from` if an older theca stored one), **and opens the file read-write**, because
   a mount rebinds the header. Without the flag, a protected container is
   refused with a message naming it.
 - `--tpm-device`: a device path, or `unix:SOCKET` for a software TPM
@@ -261,15 +261,32 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # t
   `/dev/tpmrm0` on Linux, which needs permission to open it (usually the
   `tss` group). macOS has no TPM and Windows (TBS) is not supported yet
   (go-tpm2 has no TBS transport): both say so unless a device is named.
-- `--tpm-owner-auth-file` is used by `create` only; `--tpm-auth-file` is the
-  counter's own authValue (at most 32 bytes), needed to increment and read it.
-  Both are files that only their owner can read, never arguments or
-  environment variables.
+- **The counter's authValue is derived from the container (v0.19.0).** With no
+  `--tpm-auth-*` flag, a new counter's authValue is an HKDF of the container's
+  master key: whoever unlocks the container (password plus security key) can
+  use its counter, nobody else, and **there is nothing to store**. The header
+  records it, so a mount needs only `--counter tpm`. A counter made by an older
+  theca keeps its stored authValue (`--tpm-auth-from REF`, or the deprecated
+  `--tpm-auth-file`, at every mount); `theca counter rebind` without those flags
+  moves it to a derived one.
+- **TPM passwords come from a secret manager.** `--tpm-owner-auth-from REF`
+  (`create`, `counter rebind`) and `--tpm-endorsement-auth-from REF` (`create`,
+  `counter rebind` and **every mount**, only on a TPM whose endorsement
+  hierarchy has a password) take `keychain:`, `secretservice:` or `keepassxc:`
+  references; a `file:` reference is refused. `--tpm-owner-auth-file` and
+  `--tpm-auth-file` still work (0600 or stricter) and are deprecated. Never
+  arguments or environment variables. Without `--tpm-endorsement-auth-from` on
+  such a TPM a pinned container is refused, and the message names the flag. A
+  wrong endorsement password does **not** count toward the TPM's
+  dictionary-attack lockout (the authValue of a hierarchy other than lockout is
+  not DA protected: TCG TPM 2.0 Part 1 rev 1.59, 19.8.1), so a mistake cannot
+  lock the TPM; for the same reason it is not throttled against guessing, so
+  use a long random one.
 - **When the counter is gone** (the owner undefined the index, or
   `TPM2_Clear`, a BIOS reset or a reinstall removed it; an index with
   `POLICY_DELETE` would need platform authorization, so the owner can delete
   this one) the container cannot be opened, and the message says so and names
-  `theca counter rebind FILE --counter tpm --tpm-owner-auth-file F`. That
+  `theca counter rebind FILE --counter tpm --tpm-owner-auth-from REF`. That
   command needs the factors that open the container AND the TPM owner
   password; it defines a counter (at the recorded handle if free, else the
   first free one), binds the header to it and increments it. A healthy old
@@ -285,8 +302,8 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-file owner   # t
   mount compares it **before reading the counter**; a counter on another TPM
   is refused, naming both identities (first 6 bytes in hex) and the recovery:
   `theca counter rebind`, only if you really replaced the TPM. `info` shows
-  `counter TPM identity: <hex>`. It needs the endorsement authValue to be empty
-  (the default); otherwise the mount is refused. Containers made before
+  `counter TPM identity: <hex>`. On a TPM with an endorsement password, give
+  `--tpm-endorsement-auth-from` (above); without it the mount is refused. Containers made before
   v0.18.0 carry no identity: they **open as before, with a warning** at every
   mount, until `theca counter rebind` pins them (it replaces the counter, so
   protection restarts from that moment).

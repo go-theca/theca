@@ -108,6 +108,9 @@ type Counter struct {
 	// container made before the identity existed; any other length is not a
 	// header this package writes or accepts.
 	TPMID []byte
+	// DerivedAuth: the counter's authValue is derived from the master secret
+	// (kdf.CounterAuth), not held by the user (DESIGN 5.4.2).
+	DerivedAuth bool
 }
 
 // IDSize is the size of Counter.TPMID: a SHA-256 digest.
@@ -129,6 +132,7 @@ const (
 	suiteTA1 = 1
 	flagCtr  = 1
 	flagID   = 2 // the counter record carries TPMID (only with flagCtr)
+	flagAuth = 4 // the counter's authValue is derived from the master secret (only with flagCtr)
 )
 
 // Marshal returns exactly BodySize bytes.
@@ -151,6 +155,9 @@ func (b *Body) Marshal() []byte {
 			p[2] |= flagID
 			copy(p[151:151+IDSize], c.TPMID)
 		}
+		if c.DerivedAuth {
+			p[2] |= flagAuth
+		}
 	}
 	return p
 }
@@ -160,7 +167,7 @@ func ParseBody(p []byte, fileSize uint64) (*Body, Geometry, error) {
 	if len(p) != BodySize {
 		return nil, Geometry{}, fmt.Errorf("%w: %d bytes", ErrBody, len(p))
 	}
-	if p[0] != version || p[1] != suiteTA1 || p[2]&^(flagCtr|flagID) != 0 || p[3] != 0 {
+	if p[0] != version || p[1] != suiteTA1 || p[2]&^(flagCtr|flagID|flagAuth) != 0 || p[3] != 0 {
 		return nil, Geometry{}, fmt.Errorf("%w: unknown version, suite or flags", ErrBody)
 	}
 	b := &Body{
@@ -180,6 +187,8 @@ func ParseBody(p []byte, fileSize uint64) (*Body, Geometry, error) {
 			Handle: binary.LittleEndian.Uint32(p[74:]),
 			Name:   append([]byte(nil), p[79:79+n]...),
 			Bound:  binary.LittleEndian.Uint64(p[143:]),
+
+			DerivedAuth: p[2]&flagAuth != 0,
 		}
 		if p[2]&flagID != 0 {
 			b.Counter.TPMID = append([]byte(nil), p[151:151+IDSize]...)

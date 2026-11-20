@@ -87,7 +87,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 		return false, nil
 	}
 	createCounter = func(o tpmcounter.Options) (tpmCounter, error) {
-		o.Auth, o.OwnerAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...) // the CLI wipes its copies
+		o.Auth, o.OwnerAuth, o.EndorsementAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...), append([]byte(nil), o.EndorsementAuth...) // the CLI wipes its copies
 		f.created = append(f.created, o)
 		if f.createErr != nil {
 			return nil, f.createErr
@@ -106,7 +106,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 		return f.seen(), nil
 	}
 	openCounter = func(o tpmcounter.Options) (theca.Counter, error) {
-		o.Auth, o.OwnerAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...)
+		o.Auth, o.OwnerAuth, o.EndorsementAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...), append([]byte(nil), o.EndorsementAuth...)
 		f.opened = append(f.opened, o)
 		if f.openErr != nil {
 			return nil, f.openErr

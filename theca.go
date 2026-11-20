@@ -214,9 +214,15 @@ type CreateOptions struct {
 	Hint           int    // Argon2id profile (D2)
 	Password       []byte
 	Policy         Policy
-	Counter        Counter   // optional hardware counter
-	Rand           io.Reader // nil: crypto/rand
-	CacheBytes     int       // see OpenOptions.CacheBytes
+	Counter        Counter // optional hardware counter
+	// NewCounter, when Counter is nil, makes the counter AFTER the master secret
+	// exists, and is given the authValue derived from it (DESIGN 5.4.2): the
+	// container records that the counter's authValue is derived, so a mount asks
+	// OpenOptions.CounterDerived, not CounterFor. The slice is wiped when
+	// NewCounter returns: copy what is kept.
+	NewCounter func(auth []byte) (Counter, error)
+	Rand       io.Reader // nil: crypto/rand
+	CacheBytes int       // see OpenOptions.CacheBytes
 }
 
 // OpenOptions configures Open.
@@ -227,6 +233,15 @@ type OpenOptions struct {
 	// known then: the header has no plaintext fields). An error it returns
 	// refuses the open.
 	CounterFor func(handle uint32, name []byte) (Counter, error)
+	// CounterDerived is CounterFor for a counter whose authValue is derived from
+	// the master secret (the header says so): it is given that authValue, which
+	// only someone who unlocked the container has. The slice is wiped when it
+	// returns. A container with such a counter and no CounterDerived is refused
+	// with ErrCounter.
+	CounterDerived func(handle uint32, name, auth []byte) (Counter, error)
+	// RebindDerived is RebindFor for a NEW counter with a derived authValue
+	// (the migration from a stored one). RebindFor wins if both are set.
+	RebindDerived func(handle uint32, name, auth []byte) (Counter, error)
 	// RebindFor is the recovery path for a counter that is gone (the index was
 	// undefined, the TPM was cleared) or that the container should move away
 	// from. It is asked, once the header has authenticated, for a NEW counter:
@@ -287,6 +302,7 @@ type Info struct {
 	RollbackProtected   bool
 	CounterHandle       uint32 // the counter's handle; 0 when RollbackProtected is false
 	CounterTPM          []byte // identity of the TPM the counter is pinned to; nil when RollbackProtected is false or the container predates the pin
+	CounterDerivedAuth  bool   // the counter's authValue is derived from the master secret (DESIGN 5.4.2); false when RollbackProtected is false
 	JournalEntries      uint32
 	ReplayedTransaction bool
 }
@@ -442,21 +458,31 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 			return nil, "", err
 		}
 	}
-	if o.Counter != nil {
-		id, err := identityOf(o.Counter) // before the increment: no identity, no counter moved
+	ctr, derived := o.Counter, false
+	if ctr == nil && o.NewCounter != nil {
+		auth := kdf.CounterAuth(ms)
+		ctr, err = o.NewCounter(auth)
+		clear(auth)
 		if err != nil {
 			return nil, "", err
 		}
-		if err := o.Counter.Increment(); err != nil {
-			return nil, "", err
-		}
-		c0, err := o.Counter.Read()
+		derived = true
+	}
+	if ctr != nil {
+		id, err := identityOf(ctr) // before the increment: no identity, no counter moved
 		if err != nil {
 			return nil, "", err
 		}
-		c.body.Counter = &format.Counter{Handle: o.Counter.Handle(), Name: o.Counter.Name(), Bound: c0, TPMID: id}
+		if err := ctr.Increment(); err != nil {
+			return nil, "", err
+		}
+		c0, err := ctr.Read()
+		if err != nil {
+			return nil, "", err
+		}
+		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0, TPMID: id, DerivedAuth: derived}
 		c.info.RollbackProtected = true
-		c.info.CounterHandle = o.Counter.Handle()
+		c.info.CounterHandle = ctr.Handle()
 	}
 	if err := c.writeHeader(); err != nil {
 		return nil, "", err
@@ -497,7 +523,9 @@ func (c *Container) fillInfo() {
 	c.info.RollbackProtected = c.body.Counter != nil
 	c.info.CounterHandle = 0
 	c.info.CounterTPM = nil
+	c.info.CounterDerivedAuth = false
 	if c.body.Counter != nil {
+		c.info.CounterDerivedAuth = c.body.Counter.DerivedAuth
 		c.info.CounterHandle = c.body.Counter.Handle
 		c.info.CounterTPM = c.body.Counter.TPMID
 	}

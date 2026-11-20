@@ -3,6 +3,7 @@ package tpmcounter
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ type fakeTPM struct {
 	closeEr error
 	device  string
 	ekName  []byte // EKIdentity's answer; a fixed good Name when nil
+	ekAuth  []byte // the endorsement password EKIdentityAuth last received
 }
 
 func newFake() *fakeTPM {
@@ -83,7 +85,8 @@ func (f *fakeTPM) NVUndefineSpaceAuth(owner []byte, h uint32) error {
 	return nil
 }
 
-func (f *fakeTPM) EKIdentity() ([]byte, error) {
+func (f *fakeTPM) EKIdentityAuth(auth []byte) ([]byte, error) {
+	f.ekAuth = append([]byte(nil), auth...)
 	if e := f.fail["ek"]; e != nil {
 		return nil, e
 	}
@@ -124,6 +127,73 @@ func TestIdentity(t *testing.T) {
 	f.fail["connect"] = boom
 	if _, err := c.Identity(); !errors.Is(err, boom) {
 		t.Fatalf("connect failure: %v", err)
+	}
+}
+
+// The endorsement password goes to the TPM, and a TPM refusing it is
+// ErrEndorsementAuth (which also is ErrIdentity), whatever else fails stays
+// ErrIdentity only.
+func TestIdentityEndorsementAuth(t *testing.T) {
+	f := newFake()
+	use(t, f)
+	c := &Counter{opts: Options{Device: "unix:x", EndorsementAuth: []byte("ek-pw")}}
+	if _, err := c.Identity(); err != nil || string(f.ekAuth) != "ek-pw" {
+		t.Fatalf("identity %v, the TPM got %q", err, f.ekAuth)
+	}
+	for name, rc := range map[string]uint32{"bad auth": 0x0A2 + 0x100, "auth fail": 0x08E + 0x100} {
+		f.fail["ek"] = &tpm2.TPMError{CC: 0x131, RC: rc}
+		_, err := c.Identity()
+		if !errors.Is(err, ErrEndorsementAuth) || !errors.Is(err, ErrIdentity) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, e := range map[string]error{
+		"another rc":     &tpm2.TPMError{CC: 0x131, RC: 0x9A5}, // format one, TPM_RC_LOCKOUT-like, not an auth refusal
+		"format zero":    &tpm2.TPMError{CC: 0x131, RC: 0x22},  // TPM_RC_BAD_AUTH's number without the format-one bit
+		"not a TPMError": boom,
+	} {
+		f.fail["ek"] = e
+		if _, err := c.Identity(); errors.Is(err, ErrEndorsementAuth) || !errors.Is(err, ErrIdentity) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Only a format-one TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL (whatever the session
+// or parameter number) is an authorization refusal.
+func TestIsAuthRefusal(t *testing.T) {
+	for name, c := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"nil":                           {nil, false},
+		"not a TPM error":               {boom, false},
+		"bad auth":                      {&tpm2.TPMError{RC: 0x0A2}, true},
+		"bad auth, session 1":           {&tpm2.TPMError{RC: 0x1A2}, true},
+		"auth fail":                     {&tpm2.TPMError{RC: 0x08E}, true},
+		"auth fail, session 2":          {&tpm2.TPMError{RC: 0x28E}, true},
+		"wrapped":                       {fmt.Errorf("x: %w", &tpm2.TPMError{RC: 0x0A2}), true},
+		"bad auth number, format zero":  {&tpm2.TPMError{RC: 0x022}, false},
+		"auth fail number, format zero": {&tpm2.TPMError{RC: 0x00E}, false},
+		"format one, other":             {&tpm2.TPMError{RC: 0x0A5}, false},
+		"lockout":                       {&tpm2.TPMError{RC: 0x921}, false},
+	} {
+		if got := isAuthRefusal(c.err); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestCheckEndorsementAuthSize(t *testing.T) {
+	use(t, newFake())
+	if _, err := Create(Options{Device: "unix:x", EndorsementAuth: make([]byte, 65)}); !errors.Is(err, ErrAuthTooLong) {
+		t.Fatalf("65 bytes: %v", err)
+	}
+	if _, err := Create(Options{Device: "unix:x", OwnerAuth: make([]byte, 65)}); !errors.Is(err, ErrAuthTooLong) {
+		t.Fatalf("owner, 65 bytes: %v", err)
+	}
+	if _, err := Create(Options{Device: "unix:x", EndorsementAuth: make([]byte, 64), OwnerAuth: make([]byte, 64)}); err != nil {
+		t.Fatalf("64 bytes: %v", err)
 	}
 }
 
@@ -193,7 +263,7 @@ func TestCreateErrors(t *testing.T) {
 	if _, err := Create(Options{Auth: make([]byte, 33)}); !errors.Is(err, ErrAuthTooLong) {
 		t.Fatalf("auth: %v", err)
 	}
-	if _, err := Create(Options{OwnerAuth: make([]byte, 33)}); !errors.Is(err, ErrAuthTooLong) {
+	if _, err := Create(Options{OwnerAuth: make([]byte, 65)}); !errors.Is(err, ErrAuthTooLong) {
 		t.Fatalf("owner auth: %v", err)
 	}
 	f.fail["define"] = boom

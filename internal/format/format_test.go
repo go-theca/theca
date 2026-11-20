@@ -135,7 +135,7 @@ func TestBodyTPMID(t *testing.T) {
 		"version":       func(p []byte) { p[0] = 2 },
 		"suite":         func(p []byte) { p[1] = 9 },
 		"unknown flag":  func(p []byte) { p[2] = 0x80 },
-		"flag 4":        func(p []byte) { p[2] = flagCtr | flagID | 4 },
+		"flag 8":        func(p []byte) { p[2] = flagCtr | flagID | flagAuth | 8 },
 		"reserved byte": func(p []byte) { p[3] = 1 },
 	} {
 		q := append([]byte(nil), sampleBody().Marshal()...)
@@ -152,10 +152,11 @@ func TestBodyTPMID(t *testing.T) {
 	}
 	mut := func(f func(p []byte)) []byte { p := withID(); f(p); return p }
 	cases := map[string][]byte{
-		"id flag without a counter": mut(func(p []byte) { clear(p[72:]); p[2] = flagID }),
-		"id area, no id flag":       mut(func(p []byte) { p[2] = flagCtr }),
-		"id area bytes beyond 32":   mut(func(p []byte) { p[183] = 1 }),
-		"unknown flag with id":      mut(func(p []byte) { p[2] |= 4 }),
+		"id flag without a counter":   mut(func(p []byte) { clear(p[72:]); p[2] = flagID }),
+		"id area, no id flag":         mut(func(p []byte) { p[2] = flagCtr }),
+		"id area bytes beyond 32":     mut(func(p []byte) { p[183] = 1 }),
+		"unknown flag with id":        mut(func(p []byte) { p[2] |= 8 }),
+		"auth flag without a counter": mut(func(p []byte) { clear(p[72:]); p[2] = flagAuth }),
 	}
 	for name, p := range cases {
 		if _, _, err := ParseBody(p, 1<<50); err == nil {
