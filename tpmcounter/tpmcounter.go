@@ -34,6 +34,9 @@ var (
 	ErrNoCounter = errors.New("tpmcounter: the TPM has no NV index at the counter's handle")
 	// ErrAuthTooLong: an authValue longer than a SHA-256 digest (Part 3 31.3.1).
 	ErrAuthTooLong = errors.New("tpmcounter: an authValue is at most 32 bytes")
+	// ErrIdentity: the TPM could not name itself (no EK, a set endorsement
+	// authValue) or answered with something that is not an EK Name.
+	ErrIdentity = errors.New("tpmcounter: cannot read this TPM's identity")
 	// ErrNoFreeHandle: every handle in the search range is taken.
 	ErrNoFreeHandle = errors.New("tpmcounter: no free NV index handle in the owner range searched")
 )
@@ -47,6 +50,9 @@ const (
 
 // DefaultLinuxDevice is the kernel resource manager.
 const DefaultLinuxDevice = devtpm.DefaultDevice
+
+// IDSize is the size of an identity: a SHA-256 digest.
+const IDSize = 32
 
 // maxAuth is the digest size of the counter's nameAlg (SHA-256).
 const maxAuth = 32
@@ -78,6 +84,7 @@ type nvTPM interface {
 	NVIncrementAuth(authHandle uint32, auth []byte, nvIndex uint32) error
 	NVReadCounter(auth []byte, nvIndex uint32) (uint64, error)
 	NVUndefineSpaceAuth(ownerAuth []byte, nvIndex uint32) error
+	EKIdentity() ([]byte, error)
 }
 
 // goos is replaced by tests.
@@ -248,6 +255,33 @@ func (c *Counter) Increment() error {
 		}
 		return err
 	})
+}
+
+// Identity implements theca.IdentifiedCounter: the identity of THIS TPM, the
+// SHA-256 digest inside the Name of its endorsement key (the EK Credential
+// Profile ECC P-256 template, created transiently and flushed, never made
+// persistent). The same TPM gives the same identity on every call, another TPM
+// another one. Needs the endorsement hierarchy's authValue to be empty, the
+// default; otherwise it fails and the mount is refused.
+//
+// It names the TPM, it does not prove the TPM answering is that one: whoever
+// controls a software TPM can present any EK (DESIGN 5.4.1).
+func (c *Counter) Identity() ([]byte, error) {
+	var id []byte
+	err := c.opts.with(func(t nvTPM) error {
+		name, err := t.EKIdentity()
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrIdentity, err)
+		}
+		// 0x000B (SHA-256) || 32-byte digest: anything else is not the Name
+		// of the template asked for, and is not hashed into an identity.
+		if len(name) != 2+IDSize || name[0] != 0x00 || name[1] != 0x0B {
+			return fmt.Errorf("%w: the EK Name is %d bytes, want 34 starting 000b", ErrIdentity, len(name))
+		}
+		id = append([]byte(nil), name[2:]...)
+		return nil
+	})
+	return id, err
 }
 
 // Destroy deletes the index under the owner password in the Options it was

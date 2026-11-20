@@ -163,10 +163,32 @@ const recovery = "if the TPM was reset, cleared or replaced, or the counter dele
 	"`theca counter rebind FILE --counter tpm` (with the owner password, and the factors that open the container) binds it to a new counter and deletes the old one if it is still there; " +
 	"rollback protection then restarts from that moment. An OLD COPY of this container also shows this message: do not rebind to open an old copy"
 
+// unpinned is the warning for a container made before the TPM identity was
+// pinned: it still opens, as before.
+const unpinned = "this container's rollback counter is not pinned to a TPM identity (it was made by an older theca): " +
+	"a counter that another TPM defines at the same handle would be accepted. " +
+	"`theca counter rebind FILE --counter tpm` pins this TPM, with the owner password and the factors that open the container; " +
+	"it replaces the counter, so rollback protection restarts from that moment"
+
+// identityLine says which TPM the counter is pinned to, or that none is.
+func identityLine(i theca.Info) string {
+	if i.CounterTPM == nil {
+		return "counter TPM identity: not pinned (" + unpinned + ")"
+	}
+	return "counter TPM identity: " + theca.ShortID(i.CounterTPM) + " (EK Name digest: a counter on another TPM is refused)"
+}
+
+// identityRecovery names the way out of a refusal on identity.
+const identityRecovery = "if this is a different TPM on purpose (the machine or the TPM was replaced, the TPM's endorsement seed was changed), " +
+	"`theca counter rebind FILE --counter tpm` (with the owner password and the factors that open the container) binds it to a new counter on this TPM and pins this TPM; " +
+	"rollback protection then restarts from that moment. If you did not replace the TPM, do NOT rebind: something other than your TPM is answering"
+
 // hint turns the library's counter refusals into ones that name the flag or
 // the recovery.
 func (f *tpmFlags) hint(err error) error {
 	switch {
+	case errors.Is(err, theca.ErrCounterIdentity):
+		return fmt.Errorf("%w: %s", err, identityRecovery)
 	case errors.Is(err, theca.ErrCounter) && f.counter == "":
 		return fmt.Errorf("%w: this container is bound to a TPM counter, give --counter tpm", err)
 	case errors.Is(err, tpmcounter.ErrNoCounter), errors.Is(err, tpmcounter.ErrNotCounter), errors.Is(err, theca.ErrCounter):
@@ -196,7 +218,10 @@ func rebindCmd() *cobra.Command {
 			"(--tpm-owner-auth-file). The new counter is made at the handle the container\n" +
 			"records when that handle is free, otherwise at the first free one.\n\n" +
 			"Rollback protection restarts from now: nothing is checked against the old\n" +
-			"counter, so a copy of the container made earlier is judged by the new one.",
+			"counter, so a copy of the container made earlier is judged by the new one.\n\n" +
+			"It also pins THIS TPM's identity in the container (a counter on another TPM\n" +
+			"is refused from then on): use it to pin a container made by an older theca,\n" +
+			"or after the TPM was replaced on purpose.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			on, err := s.tpm.on()
@@ -267,6 +292,7 @@ func rebindCmd() *cobra.Command {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: the container is now bound to a NEW TPM counter, NV index %#08x. "+
 				"Rollback protection restarts from now. %s Give --counter tpm to every command that opens this container.\n",
 				c.Info().CounterHandle, gone)
+			fmt.Fprintln(cmd.ErrOrStderr(), identityLine(c.Info()))
 			return closeBoth(c, f, nil)
 		},
 	}

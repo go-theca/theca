@@ -439,6 +439,93 @@ the **current** session, a copy taken mid-session (e.g. by a sync client) can
 be substituted at the next mount; that window is the last session, stated in
 the CLI output at mount, as is the absence of any counter.
 
+#### 5.4.1 Pinning the TPM's identity (go-theca/theca#39, v0.18.0)
+
+**The gap.** The header recorded handle, Name and bound value: the counter's
+*kind*. The same handle and attributes give the same Name on any TPM, so
+whoever supplies the TPM can define that index, raise it to the old bound and
+have an old copy opened (reproduced on two swtpm instances, §19 I24).
+
+**What is pinned.** The identity of the TPM: the SHA-256 digest inside the Name
+of its **Endorsement Key**, the EK Credential Profile ECC P-256 template
+(L-2) created transiently under the endorsement hierarchy and flushed at once,
+never made persistent (`tpm2.EKIdentity`, go-tpm2/tpm2 v0.11.0). The EK is
+derived from the endorsement primary seed, so one TPM gives one EK and two
+TPMs give two; the seed can be replaced only by `TPM2_ChangeEPS`, which needs
+platform authorization (EK Credential Profile v2.6, §2.1 and §2.2, pp. 13-14,
+opened). Measured on swtpm: ten calls, one identity; two instances, two
+identities; the computed Name equals the Name the TPM reports in the
+`CreatePrimary` response. The 32 bytes go in the header body (flag bit 1,
+bytes 151-182), so they are authenticated with it.
+
+**When it is written and checked.** Written at `create` and at
+`counter rebind` (the new counter's TPM). Checked at every mount **before the
+counter is read**: a value read from another TPM decides nothing. A mismatch is
+`ErrCounterIdentity`, naming both identities (first 6 bytes, hex) and the way
+back (rebind, with the warning that if the TPM was not replaced, something else
+is answering and one must not rebind). `--accept-rollback` does not bypass it.
+A counter that cannot say which TPM it is on, or a TPM that cannot create its
+EK (a set endorsement authValue), is a refusal, not "no pin". A container made
+before v0.18.0 has no identity: it **opens as before, with a stated warning** at
+every mount and on `info`, and a mount does not pin it (a mount by the
+attacker's TPM would pin the attacker's TPM). Only `counter rebind`, which the
+owner runs deliberately, pins. Rebind replaces the counter and protection
+restarts, as in §19 I22.
+
+**What it stops.** An attacker who gives the victim a *different* TPM (another
+virtual TPM, a software TPM started from fresh state, a replaced TPM) and
+defines the same index on it: the EK differs, the container is refused, and the
+other TPM's counter is not even read. This is the attack of the issue.
+
+**What it does NOT stop.** The identity names a TPM; it does not prove that the
+TPM answering is that one.
+
+- Whoever controls the TPM *in use* controls what it answers: the host of a
+  virtual TPM, a program standing between theca and the TPM (a replaced
+  `/dev/tpmrm0`, a socket) can report any EK public, including the victim's.
+  The EK public is not a secret.
+- Whoever holds a *copy of the TPM's state* (swtpm's state directory, a VM
+  snapshot) holds its endorsement seed: it is the same TPM for every check
+  below, and can also roll the NV counter back with the state.
+- A bus interposer on a discrete TPM can forge `NV_Read` answers.
+The README states these limits; the earlier sentence "the protection is against
+replacement of the container file, not against the TPM's controller" stands.
+
+**Decision: `NV_Certify` is not shipped.** The alternative the issue names is
+`TPM2_NV_Certify` under an attestation key bound to the EK (Part 3 rev 1.83
+§31.16, pp. 418-419, opened): the TPM signs a `TPMS_NV_CERTIFY_INFO` holding the
+index Name and contents, with caller-chosen `qualifyingData` (a nonce), under
+a key whose `sign` attribute is set, and needs read authorization for the
+index. go-tpm2 has the AK (`CreatePrimary`, restricted ECDSA P-256, attest.go),
+the EK, `MakeCredential` and `ActivateAKWithEK` (activate.go) and the
+`TPMS_ATTEST` parsing of Quote; it has **no** `NV_Certify` command (its code
+0x184 is not in the table), so it would be added there first.
+Compared: it would add per mount a signing-key creation, a certify, a
+signature verification and, to bind the AK to the EK, a credential activation
+(a policy session, three more commands) or a pinned AK Name; roughly four to
+six extra TPM commands and a new parser for attacker-visible bytes, against
+two (CreatePrimary, FlushContext) for the EK identity. What it buys is the
+authentication of the *answers* (value and Name) against a party who forges
+answers but does not hold the TPM's keys: a bus interposer. It buys nothing
+against the issue's attacker, who brings a TPM of his own, and nothing against
+the TPM's controller, who holds the AK too (a software TPM's AK is as
+available to its host as its EK). Since neither of the issue's two stated
+attackers is stopped by it and its one real attacker is a different, hardware
+one, it is deferred: it is the next step if the bus interposer enters the
+threat model, with this section as its starting point. The EK Name check is
+also the first half of that design (the AK would be bound to this EK), so
+nothing shipped here is thrown away. Not opened and so not relied on:
+`TPM2_ActivateCredential` and `TPM2_CreatePrimary` clauses of Part 3 (go-tpm2's
+implementation of them was read and tested, not the clauses).
+
+**Cost.** One `CreatePrimary` and one `FlushContext` per mount (and one at
+create/rebind). On swtpm, 0.26 ms, measured under 1-minute load 13, so
+indicative only. A hardware TPM derives an ECC key in tens of milliseconds
+(not measured here: this machine has no TPM interface and fractal's device is
+not readable). The EK template is ECC P-256 only; the RSA-2048 template of the
+profile is not used, because go-tpm2 implements only the ECC one and every
+TPM 2.0 profile that theca targets supports ECC P-256.
+
 **Q3.1** (decided in v0.9.0, §19 I22: the index's own `authValue`, supplied
 with `--tpm-auth-file`, empty by default) Which write policy for the index: a
 policy bound to a TPM-resident Theca key, or `authValue` from the unlock (the
@@ -1003,3 +1090,4 @@ design stays the reference; each row says why the code won.
 | I21 | §6.2, H2, H7 | **Decision H2 revised to (b)** (HARDWARE-KEYS §9, "H2 revised"). A FIDO2 key holds a **discoverable** credential (`rpId "theca"`, `credProtect 3`); nothing about it is stored in the container. Its hmac-secret salt is derived from the partner factor: `kdf.FIDO2Salt(KEK_partner, kind)`. Enrolment asks one new credential for one output per partner (1 or 2 salts, one request); each output becomes the wrap slot `{partner, key}`, one slot per partner. Unlock asks the key **once**, for every Theca credential it holds and both partners' salts, and tries `{partner, credential}` for each answer, at most `MaxFIDO2Credentials` (128); a malformed answer is `ErrAuthenticator`. | I19's residual leak (a predictable credential-ID length readable under a password guess) could not be removed while a locator was stored. With the salt derived from the partner, a wrong password asks the key for a different salt, so every guess needs a fresh, touch-gated question to the key, even with the key and its PIN in hand. **The offline test moves rather than vanishes**: the salt is now a password verifier (at Argon2id cost) for whoever READS it, a forged authenticator or a leaked log. The salts are therefore wiped after each call and never logged. The comparison of the three designs is in HARDWARE-KEYS §9 "H2 revised". Other costs: one discoverable credential per enrolment on the key; a key held with its PIN shows that Theca credentials exist; two touches per enrolment without `hmac-secret-mc`; `salt2` is no longer free for rotation; a malformed answer fails the unlock closed (`ErrAuthenticator`); a slot for the key alone is refused. **H7 relaxed by the user on 2026-11-16**: the salt of `{password, key}` depends on the header salt, so a future re-salt needs the key for that slot. `getNextAssertion` carrying hmac-secret, and the one-touch walk, were **measured** on a YubiKey 5.7.4 (HARDWARE-KEYS §9, go-macos/fido `TestRealKeyDiscoverableNextAssertion`); keys with a display remain unmeasured. |
 | I22 | §5.4, Q3.1, R2 | **The TPM counter (v0.9.0).** `tpmcounter` implements `Counter` over go-tpm2/tpm2 v0.9.0: `NVDefineCounter` (index type `TPM_NT_COUNTER`, attributes COUNTER, AUTHWRITE and AUTHREAD, no policy), `NVIncrementAuth`, `NVReadCounter`. **Q3.1 decided**: the index's own `authValue`, from `--tpm-auth-file` (empty if absent, at most 32 bytes), not a policy bound to a TPM key. The owner password for the definition comes from `--tpm-owner-auth-file`, create only. **`POLICY_DELETE` is dropped from §5.4**: Part 3 §31.3.1 (p. 378, opened) says that attribute is accepted only when the index is defined with Platform Authorization, and swtpm refused an owner definition with `TPM_RC_ATTRIBUTES`. The owner can therefore delete the counter with `NV_UndefineSpace`, and `TPM2_Clear` removes it (note 4 there). This is a **denial of service, not a rollback**: a counter redefined afterwards has the same Name but starts above every earlier count (checked on swtpm: Part 3 p. 376), so the recorded bound `b` never equals it again and the container is refused until `--accept-rollback`. **The Name changes once**: it covers `TPMA_NV_WRITTEN`, which the first increment sets, so the counter reads its Name again after an increment (measured; the first end-to-end test failed on it). A mount under a counter **writes** (it rebinds the header), so `info`, `verify` and `export` open the file read-write with `--counter tpm`. The counter is found from the authenticated header (`OpenOptions.CounterFor`), because the header has no plaintext fields: the user does not name a handle. A `Counter` holds no connection: each operation opens the device. Transports: `/dev/tpmrm0` (Linux), `unix:SOCKET` (software TPM); macOS has no TPM and go-tpm2 has no Windows TBS transport, so both return `ErrUnsupported`. `TPMA_NV_ORDERLY` stays unused (§31.8.1 note 2). Limit unchanged from I20: one counter per container. **Review of v0.9.0, fixed in v0.10.0.** (1) *Availability*: with the counter gone (index undefined, `TPM2_Clear`, reinstall) the open failed before `AcceptRollback` was read, so the container could not be opened and the README's "refused until `--accept-rollback`" was false. Recovery is now `theca counter rebind` (`OpenOptions.RebindFor`): it needs the unlocking factors and the owner password, defines a counter (at the recorded handle if free), increments it, binds Handle, Name and Bound to it and commits; **rollback protection restarts from that moment, and nothing is checked against the old counter.** The refusal names it. Tested on swtpm for a deleted index and for another TPM. (2) *Design limit*: the header binds a counter's **kind** (handle, and a Name that covers type and attributes), not a **TPM**. Whoever controls the TPM in use (a virtual TPM's host, a software TPM whose state sits on the container's storage, a replaced TPM) can define an index with the same Name and raise it to at least an old bound. The protection is against replacement of the container file, not against the TPM's controller. Pinning the TPM's identity (an EK-based or attested identity, `NV_Certify` under an attestation key) is a separate issue. (3) `TPMA_NV_NO_DA` (Part 2 Table 225, p. 165, opened) is set on new counters: the authValue is a secret from a file, so DA throttling buys nothing, and a wrong file must not lock the TPM's other users; swtpm shows 40 wrong authValues lock an index without it and not with it. v0.9.0 counters (without NO_DA, another Name) are still opened (`IsCounterAttributes`). | The protocol was written without having defined an index: the POLICY_DELETE assumption and the stable Name were both wrong and both found by a real (software) TPM. Not measured: a hardware TPM (fractal's `/dev/tpmrm0` is not readable by an unprivileged user), Windows. |
 | I23 | §6.2, I20, I21 | **Making the key mandatory (go-theca/theca#43).** Under policy `any`, `EnrollFIDO2` only ADDS the slots `{password, key}` (and `{recovery, key}`); the password-only and recovery-only slots stay, so the password alone still opens the container. Measured on a YubiKey Bio (v0.10.3): `enroll-key` left a container the password alone opened, and `slots remove --keep` could not name the key, so "the key still opens it" was never checked before a removal. **Design.** A set that stands for the key is `{partner, key}` with exactly ONE partner (I21: a key's salt comes from its partner, so no slot is the key alone, and `password+recovery+fido2` is not a set): `password+fido2`, `recovery+fido2`. One Derive (one touch) answers every Theca credential on the key for the salts of the presented partners (`KeyPairs`); a set with the key is then one pair per credential, and `RemoveFactorSets(remove, keep [][]Factor)` removes the slots ANY remove-set opens and requires ANY keep-set to open a slot not among them, else `ErrLastWay` (`RemoveFactors` is the one-set case). The proof is therefore the slot trial-opened under the touched key: a key that is not the one enrolled here, or that holds no Theca credential (`ErrNoCredential`), proves nothing and refuses BEFORE any write. `enroll-key` reports from the container what still opens it (`SlotsOf` of the password, of the recovery code when presented) and prints the exact `slots remove` command. `enroll-key --require` pairs, touches the key once more (the proof, so two enrolment touches plus one), and only then removes the password-only slot; the pairing and the removal are two commits, and a crash or refusal between them leaves BOTH the new key slot and the password-only slot (a way in is never missing), the output saying the password still opens it. **What `--require` does NOT do**: it never removes the recovery-only slot, because the recovery code is the way in if the key is lost; under policy `any` it therefore still opens the container alone, and the output says so with the command that removes it (`--remove recovery --keep password+fido2`, after which a lost key means a lost container). A recovery code that was not presented cannot be tested, and the output says that too. **Limits**: a container that only the key opens needs `--fido2` to be opened at all, so a removal there touches twice (open, proof); `enroll-key` has no `--fido2`, so a second key cannot be added to such a container (the unlock and the enrolment would hold two handles on one device). Like `RemoveSlot`, none of this stops an older copy (R7). | The issue's own two proposals (a `--keep` with the key, `--require`) are both implemented over one primitive instead of two. |
+| I24 | §5.4.1, I22 | **TPM identity pinning (go-theca/theca#39, v0.18.0).** The header body gets an optional 32-byte `TPMID` (flag bit 1): the digest inside the Name of the TPM's ECC P-256 EK, from `tpm2.EKIdentity` (go-tpm2/tpm2 v0.11.0, which adds `FlushContext`, `EKName`, `EKIdentity`). `theca.IdentifiedCounter` is the optional interface; `tpmcounter.Counter.Identity` implements it. Written at `create` and `counter rebind`; checked at every mount before the counter is read; mismatch is `ErrCounterIdentity` naming both (6-byte hex) with the recovery; `--accept-rollback` does not bypass it. Old containers open with a warning and are pinned only by `counter rebind`. Reproduced first: on two swtpm instances, an index with the same handle and Name raised to the bound of an old copy opened it (the control in `TestSwtpmIdentityPinning`, and the CLI test), and is refused now. `NV_Certify` under an EK-bound AK was weighed and deferred (§5.4.1). Header parsing of the new field is fuzzed (`FuzzParseBody`, seed with an identity) and refuses a flag without a counter, an identity area without the flag, and a non-zero tail. Everything the TPM answers is bounded: the EK point coordinates at most 32 bytes (`ErrEKPoint`), the Name exactly 34 bytes starting `000b`. | The EK identity names a TPM; it does not prove the TPM answering is that one (a software TPM's host, a copy of its state, a bus interposer). Measured on swtpm only; no hardware TPM, no Windows. |

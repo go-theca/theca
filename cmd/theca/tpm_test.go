@@ -51,6 +51,23 @@ type fakeTPM struct {
 	failHandle uint32 // createCounter refuses this handle (taken)
 	removeErr  error
 	removed    []uint32 // handles removeCounter was asked about
+	tpmID      []byte   // when set, the counters name their TPM with it
+}
+
+// identFake is a counter that names its TPM.
+type identFake struct {
+	*fakeCounter
+	id []byte
+}
+
+func (c identFake) Identity() ([]byte, error) { return c.id, nil }
+
+// seen returns f.ctr as the CLI sees it: identified when f.tpmID is set.
+func (f *fakeTPM) seen() tpmCounter {
+	if f.tpmID != nil {
+		return identFake{f.ctr, f.tpmID}
+	}
+	return f.ctr
 }
 
 func installFakeTPM(t *testing.T) *fakeTPM {
@@ -86,7 +103,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 		if f.failIncAt1 {
 			f.ctr.incErr = errors.New("increment refused")
 		}
-		return f.ctr, nil
+		return f.seen(), nil
 	}
 	openCounter = func(o tpmcounter.Options) (theca.Counter, error) {
 		o.Auth, o.OwnerAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...)
@@ -94,7 +111,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 		if f.openErr != nil {
 			return nil, f.openErr
 		}
-		return f.ctr, nil
+		return f.seen(), nil
 	}
 	return f
 }

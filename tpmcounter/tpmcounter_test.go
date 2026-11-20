@@ -1,6 +1,7 @@
 package tpmcounter
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"os"
@@ -13,7 +14,7 @@ import (
 )
 
 // The counter is a theca.Counter.
-var _ theca.Counter = (*Counter)(nil)
+var _ theca.IdentifiedCounter = (*Counter)(nil)
 
 // fakeTPM is an in-memory NV counter store.
 type fakeTPM struct {
@@ -24,6 +25,7 @@ type fakeTPM struct {
 	always  bool // NVReadPublic reports every handle as taken
 	closeEr error
 	device  string
+	ekName  []byte // EKIdentity's answer; a fixed good Name when nil
 }
 
 func newFake() *fakeTPM {
@@ -79,6 +81,50 @@ func (f *fakeTPM) NVUndefineSpaceAuth(owner []byte, h uint32) error {
 	}
 	delete(f.pubs, h)
 	return nil
+}
+
+func (f *fakeTPM) EKIdentity() ([]byte, error) {
+	if e := f.fail["ek"]; e != nil {
+		return nil, e
+	}
+	if f.ekName != nil {
+		return f.ekName, nil
+	}
+	return append([]byte{0, 0x0B}, bytes.Repeat([]byte{0x5a}, 32)...), nil
+}
+
+func TestIdentity(t *testing.T) {
+	f := newFake()
+	use(t, f)
+	c := &Counter{opts: Options{Device: "unix:x"}}
+	id, err := c.Identity()
+	if err != nil || !bytes.Equal(id, bytes.Repeat([]byte{0x5a}, IDSize)) {
+		t.Fatalf("identity %x (%v)", id, err)
+	}
+	// What the TPM answers is checked, not trusted: a short or oversized Name,
+	// or one that is not SHA-256's, is no identity.
+	for name, n := range map[string][]byte{
+		"short":      {0, 0x0B, 1},
+		"long":       bytes.Repeat([]byte{0}, 100),
+		"empty":      {},
+		"wrong alg":  append([]byte{0, 0x04}, make([]byte, 32)...),
+		"wrong alg2": append([]byte{1, 0x0B}, make([]byte, 32)...),
+	} {
+		f.ekName = n
+		if _, err := c.Identity(); !errors.Is(err, ErrIdentity) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	f.ekName = nil
+	f.fail["ek"] = boom
+	if _, err := c.Identity(); !errors.Is(err, ErrIdentity) {
+		t.Fatalf("EK failure: %v", err)
+	}
+	delete(f.fail, "ek")
+	f.fail["connect"] = boom
+	if _, err := c.Identity(); !errors.Is(err, boom) {
+		t.Fatalf("connect failure: %v", err)
+	}
 }
 
 // use installs f as the TPM behind connect, for the test's duration.

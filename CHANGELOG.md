@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.18.0
+
+- The rollback counter is pinned to THIS TPM (go-theca/theca#39). `create` and
+  `counter rebind` record the identity of the TPM (the digest of the Name of its ECC P-256
+  endorsement key, created transiently and flushed) in the authenticated header; every
+  mount checks it before it reads the counter, and a counter on another TPM is refused,
+  naming both identities and the recovery. Before, another TPM with the same index, the
+  same Name and a value raised to an old bound accepted an old copy (reproduced on two
+  swtpm instances; fixed).
+- Containers made by older versions carry no identity: they open as before, with a warning
+  at every mount and on `info`, until `theca counter rebind` pins them.
+- Not stopped, and stated in the README: whoever controls the TPM in use, or holds a copy of
+  its state, or forges the bus answers. `TPM2_NV_Certify` was weighed and deferred
+  (DESIGN 5.4.1).
+- Library: `IdentifiedCounter`, `ErrCounterIdentity`, `ShortID`, `Info.CounterTPM`,
+  `tpmcounter.Counter.Identity`. Needs go-tpm2/tpm2 v0.11.0. Header format: one optional
+  field (flag bit 1); older readers refuse a header that has it, newer readers read older ones.
+
 ## v0.17.1
 
 - Fix: the help showed `--device fido list` — pflag takes the first backquoted text of a
