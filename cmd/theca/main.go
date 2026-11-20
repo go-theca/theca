@@ -30,13 +30,22 @@ import (
 
 func enrollKeyCmd() *cobra.Command {
 	var s secrets
+	var require bool
 	cmd := &cobra.Command{
 		Use:   "enroll-key FILE",
 		Short: "Pair the attached FIDO2 security key with the password (and the recovery code)",
 		Long: "Pair the attached FIDO2 security key with the password, and with the\n" +
 			"recovery code too when --recovery-file names it. The key makes one\n" +
 			"discoverable credential and is touched twice: to register, then to confirm.\n" +
-			"Nothing about the key is written into the container but its pairwise slots.",
+			"Nothing about the key is written into the container but its pairwise slots.\n\n" +
+			"Pairing only ADDS a way in: under policy any the password alone (and the\n" +
+			"recovery code alone) still open the container. enroll-key says which still\n" +
+			"do, and the command that removes the password-only slot. --require does it\n" +
+			"in the same run: after pairing, the key is touched once more to PROVE that\n" +
+			"the password with the key opens the container, and only then is the\n" +
+			"password-only slot removed (nothing is written if the proof fails). The\n" +
+			"recovery code alone is NOT touched by --require: it stays the way in if the\n" +
+			"key is lost, until you remove it with slots remove.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f, err := os.OpenFile(args[0], os.O_RDWR, 0)
@@ -52,6 +61,9 @@ func enrollKeyCmd() *cobra.Command {
 			defer wipe()
 			if err != nil {
 				return err
+			}
+			if require && len(u.Password) == 0 {
+				return errors.New("--require removes the password-only slot, so it needs the password: give --password-file")
 			}
 			// The partner factors, derived from the same secrets that open it.
 			var partners []theca.Factor
@@ -87,19 +99,20 @@ func enrollKeyCmd() *cobra.Command {
 			label := dev.Label()
 			fmt.Fprintln(cmd.ErrOrStderr(), "Touch the security key twice when it blinks: to register it, then to confirm.")
 			err = c.EnrollFIDO2(cmd.Context(), dev, partners...)
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "ok: the key %s is paired with %d factor(s)\n", label, len(partners))
+				err = afterEnroll(cmd, c, dev, &s, args[0], partners, require)
+			}
 			if cerr := c.Close(); err == nil {
 				err = cerr
 			}
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "ok: the key %s is paired with %d factor(s)\n", label, len(partners))
-			return nil
+			return err
 		},
 	}
 	s.flags(cmd)
 	s.recoveryFlag(cmd)
 	s.pinFlag(cmd)
+	cmd.Flags().BoolVar(&require, "require", false, "after pairing, prove the key opens the container, then remove the password-only slot: the key becomes mandatory with the password")
 	return cmd
 }
 

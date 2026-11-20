@@ -39,6 +39,24 @@ func (c *Container) SlotsOf(fs ...Factor) ([]int, error) {
 	return c.slotsOfLocked(fs)
 }
 
+// slotsOfSetsLocked is the union of the slots each set opens, ascending.
+func (c *Container) slotsOfSetsLocked(sets [][]Factor) ([]int, error) {
+	var out []int
+	for _, fs := range sets {
+		idx, err := c.slotsOfLocked(fs)
+		if err != nil {
+			return nil, err
+		}
+		for _, i := range idx {
+			if !slices.Contains(out, i) {
+				out = append(out, i)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
 func (c *Container) slotsOfLocked(fs []Factor) ([]int, error) {
 	kek, err := slotKEK(fs)
 	if err != nil {
@@ -74,19 +92,32 @@ func (c *Container) slotsOfLocked(fs []Factor) ([]int, error) {
 // Like RemoveSlot it only stops access to the CURRENT container: anyone with
 // an older copy can still open it with the removed factor (DESIGN 2, R7).
 func (c *Container) RemoveFactors(remove, keep []Factor) (int, error) {
+	return c.RemoveFactorSets([][]Factor{remove}, [][]Factor{keep})
+}
+
+// RemoveFactorSets is RemoveFactors for a factor set that stands for SEVERAL
+// slots: "the password with the key" is one pair per Theca credential the key
+// holds (KeyPairs). A slot is removed when ANY set in `remove` opens it, and
+// the container must still open under ANY set in `keep` through a slot that is
+// not among those removed, else ErrLastWay. Nothing is written before both are
+// known, and the writes are RemoveFactors's.
+func (c *Container) RemoveFactorSets(remove, keep [][]Factor) (int, error) {
+	if len(remove) == 0 || len(keep) == 0 {
+		return 0, fmt.Errorf("%w: a removal needs factors to remove and factors to keep", ErrOption)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.usable(); err != nil {
 		return 0, err
 	}
-	gone, err := c.slotsOfLocked(remove)
+	gone, err := c.slotsOfSetsLocked(remove)
 	if err != nil {
 		return 0, err
 	}
 	if len(gone) == 0 {
 		return 0, fmt.Errorf("%w: no slot opens with the factors to remove", ErrNoMatch)
 	}
-	stay, err := c.slotsOfLocked(keep)
+	stay, err := c.slotsOfSetsLocked(keep)
 	if err != nil {
 		return 0, err
 	}

@@ -22,6 +22,9 @@ type cliKey struct {
 	device  string // what --device asked for
 	closed  int
 	failErr error
+	// deriveCreds, when not nil, are the credentials Derive answers from instead
+	// of the enrolled ones: another key's, or none.
+	deriveCreds [][]byte
 }
 
 func (k *cliKey) out(cr []byte, salts [][32]byte) [][]byte {
@@ -56,11 +59,15 @@ func (k *cliKey) Derive(_ context.Context, salts [][32]byte) ([][][]byte, error)
 	if err := k.askPIN(); err != nil {
 		return nil, err
 	}
-	if len(k.creds) == 0 {
+	creds := k.creds
+	if k.deriveCreds != nil {
+		creds = k.deriveCreds
+	}
+	if len(creds) == 0 {
 		return nil, theca.ErrNoCredential
 	}
 	var res [][][]byte
-	for _, cr := range k.creds {
+	for _, cr := range creds {
 		res = append(res, k.out(cr, salts))
 	}
 	return res, nil

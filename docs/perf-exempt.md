@@ -17,6 +17,9 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `Factor.Zeroize`: clears 32 bytes.
 - `FileBacking.Size`: one `fstat`.
 - `Container.RemoveFactors`: derives the factors given (the `PasswordFactor` case for a password), trial-opens the slots (16 of 2 KiB) and rewrites the removed ones with one commit. Rare and interactive. No C counterpart.
+- `Container.RemoveFactorSets`: `RemoveFactors` for several factor sets at once (a key paired with a partner is one set per credential): the same 16 trial-opens per set and one commit. Rare and interactive. No C counterpart.
+- `KeyPairs`: one `Derive` (the user's touch on the key) and one HKDF per credential and partner.
+- `WipeSets`: clears 32 bytes per factor.
 - `Container.Slots`: trial-opens up to 16 slots of 2 KiB each, one TA1 open per slot (the `Sector/Open` row per byte). No C counterpart.
 - `Container.SlotsOf`: the same trial-opens as `Slots`, for a given factor set.
 - `fido2.Device.Close`: releases a USB HID handle.
