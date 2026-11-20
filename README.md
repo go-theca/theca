@@ -83,14 +83,22 @@ theca slots remove vault.theca --password-file pw --recovery-file rc --remove re
 
 - A keyslot holds nothing that says what opens it, so `list` shows the recorded
   slots and which ones the factors **you present** open.
-- `remove` takes the slot(s) a factor set opens (`password`, `recovery` or
-  `password+recovery`) and a DIFFERENT set to `--keep`, which must still open the
+- `remove` takes the slot(s) a factor set opens (`password`, `recovery`,
+  `password+recovery`, `password+fido2` or `recovery+fido2`) and a DIFFERENT set
+  to `--keep`, which must still open the
   container: this is checked before anything is written, and a removal that
   would leave no way in is refused. Both sets are presented with
   `--password-file` / `--recovery-file` (or the terminal).
+- A set with the key touches it ONCE (`--device`, `--pin-file` as for
+  `--fido2`): the slot it opens must exist and must not be among the removed
+  ones, so a key that is not the one enrolled here, or that holds no Theca
+  credential, is refused before any write. To make the key mandatory:
+  `theca slots remove vault.theca --password-file pw --remove password --keep password+fido2`.
+  A container only the key opens also needs `--fido2` to be opened (a second touch).
 - It stops access to **this copy** only: anyone holding an older copy can still
   open it with the removed factor (DESIGN §2, R7).
-- Library: `Container.RemoveFactors(remove, keep []Factor)`, `SlotsOf`, `Slots`,
+- Library: `Container.RemoveFactors(remove, keep []Factor)`,
+  `RemoveFactorSets(remove, keep [][]Factor)`, `KeyPairs`, `SlotsOf`, `Slots`,
   `ErrLastWay`.
 
 ### Serving the files inside: SMB on loopback
@@ -177,6 +185,17 @@ theca info vault.theca --recovery-file rc --fido2 # recovery code + key
   The key is touched twice: to register, then to confirm.
 - `--fido2` adds the attached key to an unlock. It pairs with the password
   or the recovery code. The key is never a factor alone.
+- **Pairing only ADDS a way in.** Under policy `any` the password alone (and the
+  recovery code alone) still open the container after `enroll-key`. It says
+  which still do, and prints the command that removes the password-only slot.
+  `enroll-key --require` does it in the same run: after pairing the key is
+  touched once more to prove the password with the key opens the container, and
+  only then is the password-only slot removed (nothing is removed if the proof
+  fails; the pairing stays). It does NOT remove the recovery-only slot: that
+  code is the way in if the key is lost, so under policy `any` it still opens
+  the container alone until you run `slots remove --remove recovery --keep
+  password+fido2` (then a lost key means a lost container). A recovery code that
+  was not presented cannot be tested, and the output says so.
 - **Naming a key.** `fido name set "desk key"` (go-authn/fido `cmd/fido`) stores
   a name ON the key; theca reads it with no touch and no PIN, shows the key by
   that name, and `--device "desk key"` finds it wherever it is plugged (exactly;

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.17.0
+
+- `enroll-key` says, after pairing, which factors still open the container alone (the
+  password; the recovery code when presented; a recovery code not presented is not tested
+  and the output says so) and prints the exact `slots remove` command that removes the
+  password-only slot (go-theca/theca#43).
+- `slots remove --remove SET --keep SET` accepts sets with the key: `password+fido2`,
+  `recovery+fido2` (any order; the key opens a slot only with one partner). A set with the
+  key is verified before anything is written: ONE touch on the key, and the slot it opens
+  must exist and must not be among the removed ones, else `ErrLastWay`. `slots remove` and
+  `slots list` take `--fido2`, `--device`, `--pin-file` and `--pin-from`.
+- `enroll-key --require`: pair, prove with one more touch that the password with the key
+  opens the container, then remove the password-only slot. The recovery code alone is NOT
+  removed (it is the way in if the key is lost); the output says so, with the command.
+- Library: `RemoveFactorSets(remove, keep [][]Factor)` (`RemoveFactors` is its one-set
+  case), `KeyPairs(ctx, dev, partners...)`, `WipeSets`.
+- Compatible: every `--remove` / `--keep` value accepted before still is. The error for an
+  unknown set now lists the five sets.
+
 ## v0.16.0
 
 - `create --password-to REF`, `--recovery-to REF`, `--generate N`, `--replace`: the new

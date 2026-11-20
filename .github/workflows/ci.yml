@@ -107,6 +107,7 @@ jobs:
           - {pkg: ./internal/format, target: FuzzParseBody}
           - {pkg: ./internal/format, target: FuzzParseRecoveryCode}
           - {pkg: ., target: FuzzOpenMutated}
+          - {pkg: ./cmd/theca, target: FuzzParseSet}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
