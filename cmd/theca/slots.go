@@ -287,7 +287,7 @@ func withPairs(fs factorSet, base []theca.Factor, pairs [][]theca.Factor) [][]th
 	}
 	var out [][]theca.Factor
 	for _, pr := range pairs {
-		if pr[0].Kind == base[0].Kind {
+		if pr[0].Kind == fs.kinds[0] {
 			out = append(out, pr)
 		}
 	}
