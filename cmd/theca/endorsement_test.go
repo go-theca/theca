@@ -92,8 +92,13 @@ func TestTPMManagerFlagsAndDerivedAuth(t *testing.T) {
 		}
 	}
 	if r = run(nil, "create", filepath.Join(dir, "e.theca"), "--size", "1M", "--password-file", pw, "--counter", "tpm",
-		"--tpm-auth-from", "keychain:t/missing"); r.e == nil {
-		t.Error("--tpm-auth-from: a missing entry was accepted")
+		"--tpm-auth-from", "keychain:t/missing"); r.e == nil || !strings.Contains(r.e.Error(), "no such entry") {
+		t.Errorf("--tpm-auth-from: a missing entry: %v", r.e)
+	}
+	// A mount does not read the owner password: a missing counter authValue is
+	// the only thing it can fail on, and it must.
+	if r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", "keychain:t/missing"); r.e == nil || !strings.Contains(r.e.Error(), "no such entry") {
+		t.Errorf("mount with a missing --tpm-auth-from: %v", r.e)
 	}
 	for _, pair := range [][2]string{{"--tpm-auth-file", "--tpm-auth-from"}, {"--tpm-owner-auth-file", "--tpm-owner-auth-from"}} {
 		r = run(nil, "create", filepath.Join(dir, "e.theca"), "--size", "1M", "--password-file", pw, "--counter", "tpm", pair[0], pw, pair[1], "keychain:t/ix")

@@ -3,6 +3,7 @@ package tpmcounter
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -154,6 +155,31 @@ func TestIdentityEndorsementAuth(t *testing.T) {
 		f.fail["ek"] = e
 		if _, err := c.Identity(); errors.Is(err, ErrEndorsementAuth) || !errors.Is(err, ErrIdentity) {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Only a format-one TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL (whatever the session
+// or parameter number) is an authorization refusal.
+func TestIsAuthRefusal(t *testing.T) {
+	for name, c := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"nil":                           {nil, false},
+		"not a TPM error":               {boom, false},
+		"bad auth":                      {&tpm2.TPMError{RC: 0x0A2}, true},
+		"bad auth, session 1":           {&tpm2.TPMError{RC: 0x1A2}, true},
+		"auth fail":                     {&tpm2.TPMError{RC: 0x08E}, true},
+		"auth fail, session 2":          {&tpm2.TPMError{RC: 0x28E}, true},
+		"wrapped":                       {fmt.Errorf("x: %w", &tpm2.TPMError{RC: 0x0A2}), true},
+		"bad auth number, format zero":  {&tpm2.TPMError{RC: 0x022}, false},
+		"auth fail number, format zero": {&tpm2.TPMError{RC: 0x00E}, false},
+		"format one, other":             {&tpm2.TPMError{RC: 0x0A5}, false},
+		"lockout":                       {&tpm2.TPMError{RC: 0x921}, false},
+	} {
+		if got := isAuthRefusal(c.err); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
 		}
 	}
 }
