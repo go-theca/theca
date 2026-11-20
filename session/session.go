@@ -184,6 +184,9 @@ type Server struct {
 	path string
 	wg   sync.WaitGroup
 	once sync.Once
+
+	mu      sync.Mutex
+	closing bool
 }
 
 // Listen creates the socket. A socket another process answers on is
@@ -217,7 +220,16 @@ func (s *Server) Serve(h Handler) error {
 			}
 			return err
 		}
+		// Add and Wait must not race: once Shutdown has begun, a connection
+		// that was accepted just before is dropped.
+		s.mu.Lock()
+		if s.closing {
+			s.mu.Unlock()
+			c.Close()
+			return nil
+		}
 		s.wg.Add(1)
+		s.mu.Unlock()
 		go func() {
 			defer s.wg.Done()
 			defer c.Close()
@@ -262,6 +274,9 @@ func (s *Server) handle(c net.Conn, h Handler) {
 // socket.
 func (s *Server) Shutdown() {
 	s.once.Do(func() {
+		s.mu.Lock()
+		s.closing = true
+		s.mu.Unlock()
 		s.l.Close()
 		s.wg.Wait()
 		os.Remove(s.path)

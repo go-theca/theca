@@ -99,6 +99,28 @@ func TestNotOpen(t *testing.T) {
 	}
 }
 
+type oneConn struct {
+	net.Listener
+	c net.Conn
+}
+
+func (o oneConn) Accept() (net.Conn, error) { return o.c, nil }
+
+// A connection accepted while Shutdown has begun is dropped, never served:
+// WaitGroup.Add must not race with Wait.
+func TestServeDropsConnectionDuringShutdown(t *testing.T) {
+	a, b := net.Pipe()
+	defer b.Close()
+	s := &Server{l: oneConn{c: a}, closing: true}
+	if err := s.Serve(&fakeHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	b.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := b.Read(make([]byte, 1)); err == nil {
+		t.Fatal("connection kept open")
+	}
+}
+
 func TestSecondListenRefused(t *testing.T) {
 	_, p := start(t, &fakeHandler{})
 	if _, err := Listen(p); !errors.Is(err, ErrAlreadyOpen) {
@@ -372,8 +394,10 @@ func TestClientRequestTooLongToSend(t *testing.T) {
 	l, _ := net.Listen("unix", p)
 	defer l.Close()
 	go func() {
-		c, _ := l.Accept()
-		c.Close()
+		// The listener may be closed before the client ever connects.
+		if c, err := l.Accept(); err == nil {
+			c.Close()
+		}
 	}()
 	if _, err := call(context.Background(), p, strings.Repeat("a", MaxMessage), time.Second); err == nil {
 		t.Fatal("oversized request sent")
