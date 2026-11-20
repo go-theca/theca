@@ -99,19 +99,39 @@ func TestNotOpen(t *testing.T) {
 	}
 }
 
+// oneConn hands out one connection, then reports itself closed.
 type oneConn struct {
 	net.Listener
-	c net.Conn
+	c    net.Conn
+	gave *bool
 }
 
-func (o oneConn) Accept() (net.Conn, error) { return o.c, nil }
+func (o oneConn) Accept() (net.Conn, error) {
+	if *o.gave {
+		return nil, net.ErrClosed
+	}
+	*o.gave = true
+	return o.c, nil
+}
+
+func TestOversizedLineIsTooLong(t *testing.T) {
+	long := strings.Repeat("a", MaxMessage+5)
+	for _, in := range []string{long, long + "\n"} {
+		if _, err := DecodeRequest(strings.NewReader(in)); !errors.Is(err, ErrTooLong) {
+			t.Errorf("request: %v", err)
+		}
+		if _, err := DecodeResponse(strings.NewReader(in)); !errors.Is(err, ErrTooLong) {
+			t.Errorf("response: %v", err)
+		}
+	}
+}
 
 // A connection accepted while Shutdown has begun is dropped, never served:
 // WaitGroup.Add must not race with Wait.
 func TestServeDropsConnectionDuringShutdown(t *testing.T) {
 	a, b := net.Pipe()
 	defer b.Close()
-	s := &Server{l: oneConn{c: a}, closing: true}
+	s := &Server{l: oneConn{c: a, gave: new(bool)}, closing: true}
 	if err := s.Serve(&fakeHandler{}); err != nil {
 		t.Fatal(err)
 	}
