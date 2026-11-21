@@ -95,7 +95,7 @@ func TestAPageSharedByTwoRegionsIsUnlockedByTheLastOne(t *testing.T) {
 func TestSetPageSize(t *testing.T) {
 	f := newFake(t)
 	defer SetPageSize(1)()
-	b, _ := block(1)
+	b, _ := block(8) // with 1-byte pages: 9 bytes, so the 5 locked stay inside the object (checkptr)
 	r, _ := Lock(unsafe.Pointer(&b[0]), 5)
 	if f.locks != 5 {
 		t.Fatalf("%d calls with 1-byte pages, want 5", f.locks)
