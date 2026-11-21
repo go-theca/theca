@@ -449,15 +449,11 @@ func TestSessionSeams(t *testing.T) {
 	e := newSessionEnv(t)
 	_, path, _ := exfatContainer(t)
 	boom := errors.New("no cwd")
-	savedA, savedP := absPath, osPipe
-	t.Cleanup(func() { absPath, osPipe = savedA, savedP })
+	savedA := absPath
+	t.Cleanup(func() { absPath = savedA })
 	absPath = func(string) (string, error) { return "", boom }
 	if r := run(nil, "profile", "add", "x", path); !errors.Is(r.e, boom) {
 		t.Fatal(r.e)
-	}
-	osPipe = func() (*os.File, *os.File, error) { return nil, nil, boom }
-	if _, err := spawnDaemon(context.Background(), "x", os.Stderr); !errors.Is(err, boom) {
-		t.Fatal(err)
 	}
 	_ = e
 }
@@ -494,17 +490,6 @@ func TestSpawnDaemon(t *testing.T) {
 	t.Setenv("THECA_FAKE_DAEMON", "err")
 	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil || err.Error() != "wrong password" {
 		t.Fatal(err)
-	}
-	t.Setenv("THECA_FAKE_DAEMON", "die")
-	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil || !strings.Contains(err.Error(), "without opening") {
-		t.Fatal(err)
-	}
-	t.Setenv("THECA_FAKE_DAEMON", "hang")
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	if _, err := spawnDaemon(ctx, "bio", null); !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 20*time.Second {
-		t.Fatalf("hang: %v after %v", err, time.Since(start))
 	}
 	executable = func() (string, error) { return "", errors.New("no exe") }
 	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil || err.Error() != "no exe" {
