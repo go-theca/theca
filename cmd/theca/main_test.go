@@ -331,7 +331,7 @@ func TestTerminalReader(t *testing.T) {
 	savedIs, savedRead := isTerminal, readPassword
 	defer func() { isTerminal, readPassword = savedIs, savedRead }()
 	isTerminal = func(int) bool { return false }
-	if _, err := readTerminal(RootCmd(), "x"); err == nil || !strings.Contains(err.Error(), "--password-file") {
+	if _, err := readTerminal(RootCmd(), "x"); err == nil || err.Error() != "no terminal to ask for a secret: use --password-from or --recovery-from" {
 		t.Fatalf("no terminal: %v", err)
 	}
 	isTerminal = func(int) bool { return true }
