@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/go-authn/secretsource"
 	"github.com/go-theca/theca"
 )
 
@@ -18,16 +19,18 @@ func shellWord(w string) string {
 }
 
 // secretFlag is the flag that presented a secret, as the person would type it
-// again, or a placeholder when it came from the terminal.
-func secretFlag(name, file, from string) string {
-	switch {
-	case from != "":
+// again: always a --X-from flag, never a deprecated -file one. The reference is
+// echoed when it names a secret manager; a file: reference, a file flag or the
+// terminal give the placeholder REF.
+func secretFlag(name, from string) string {
+	if r, err := secretsource.Parse(from); err == nil && r.Scheme != "file" {
 		return "--" + name + "-from " + shellWord(from)
-	case file != "":
-		return "--" + name + "-file " + shellWord(file)
 	}
-	return "--" + name + "-file " + strings.ToUpper(name) + "_FILE"
+	return "--" + name + "-from REF"
 }
+
+// refNote explains REF when a printed command holds it.
+const refNote = "      (REF is keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or keepassxc:URL)\n"
 
 // afterEnroll says what the pairing did NOT do, from the container itself: the
 // password alone, and the recovery code alone, still open it when their slots
@@ -59,8 +62,8 @@ func afterEnroll(cmd *cobra.Command, c *theca.Container, dev fidoDevice, s *secr
 		return fmt.Errorf("the key is paired, but the slots that remain could not be checked: %w", err)
 	}
 	out, errw := cmd.OutOrStdout(), cmd.ErrOrStderr()
-	pwFlag := secretFlag("password", s.passwordFile, s.passwordFrom)
-	rcFlag := secretFlag("recovery", s.recoveryFile, s.recoveryFrom)
+	pwFlag := secretFlag("password", s.passwordFrom)
+	rcFlag := secretFlag("recovery", s.recoveryFrom)
 	device := ""
 	if s.device != "" {
 		device = " --device " + shellWord(s.device)
@@ -90,11 +93,17 @@ func afterEnroll(cmd *cobra.Command, c *theca.Container, dev fidoDevice, s *secr
 			"      To require it, run:\n"+
 			"        theca slots remove %s --remove password --keep password+fido2 %s%s\n"+
 			"      (or run enroll-key with --require).\n", shellWord(file), pwFlag, device)
+		if strings.HasSuffix(pwFlag, " REF") {
+			fmt.Fprint(errw, refNote)
+		}
 	}
 	switch {
 	case rcAlone:
 		fmt.Fprintf(errw, "note: the recovery code alone still opens this container. It is the way in if the key is lost; to make it need the key too, run:\n"+
 			"        theca slots remove %s --remove recovery --keep password+fido2 %s %s%s\n", shellWord(file), pwFlag, rcFlag, device)
+		if strings.HasSuffix(pwFlag, " REF") || strings.HasSuffix(rcFlag, " REF") {
+			fmt.Fprint(errw, refNote)
+		}
 	case rc == nil:
 		fmt.Fprintln(errw, "note: the recovery code was not presented, so it is not known whether it alone opens this container (under policy any it does).")
 	}

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.21.1
+
+- The command that `enroll-key` prints (what still opens the container) and the "needs the
+  password / recovery code: give ..." refusals now name `--password-from REF` /
+  `--recovery-from REF`, never a deprecated `-file` flag; a short note says what REF is. The
+  messages of `import`, `--require` and the terminal-less refusal, and the `slots` help, do the same.
+
 ## v0.21.0
 
 - Deprecated: `--password-file`, `--recovery-file`, `--pin-file`, `--tpm-auth-file`,

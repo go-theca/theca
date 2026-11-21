@@ -25,20 +25,28 @@ func opensWith(path string, args ...string) bool {
 	return run(nil, append([]string{"verify", path}, args...)...).e == nil
 }
 
+// hintOf is what enroll-key says after the pairing: the notes, without the
+// deprecation warnings the test's own -file inputs print first.
+func hintOf(stderr string) string {
+	_, hint, _ := strings.Cut(stderr, "\nnote:")
+	return hint
+}
+
 func TestEnrollKeyNamesWhatStillOpens(t *testing.T) {
 	path, pw, rc, pin, _ := anyContainer(t)
 	// Only the password presented: it still opens alone; the recovery code was
 	// not looked at, and the output says so.
 	r := run(nil, "enroll-key", path, "--password-file", pw, "--pin-file", pin)
-	want := "theca slots remove " + path + " --remove password --keep password+fido2 --password-file " + pw
-	if r.e != nil || !strings.Contains(r.err, "the password alone still opens this container") || !strings.Contains(r.err, want) ||
+	want := "theca slots remove " + path + " --remove password --keep password+fido2 --password-from REF"
+	if r.e != nil || !strings.Contains(r.err, "(REF is keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or keepassxc:URL)") || strings.Contains(hintOf(r.err), "-file") ||
+		!strings.Contains(r.err, "the password alone still opens this container") || !strings.Contains(r.err, want) ||
 		!strings.Contains(r.err, "recovery code was not presented") || !strings.Contains(r.out, "paired with 1 factor(s)") {
 		t.Fatalf("%v out=%q err=%q", r.e, r.out, r.err)
 	}
 	// Both presented, a key chosen: both still open alone, each with its command.
 	r = run(nil, "enroll-key", path, "--password-file", pw, "--recovery-file", rc, "--pin-file", pin, "--device", "iokit:1")
 	if r.e != nil || !strings.Contains(r.err, "the password alone still opens") || !strings.Contains(r.err, "the recovery code alone still opens") ||
-		!strings.Contains(r.err, "--remove recovery --keep password+fido2 --password-file "+pw+" --recovery-file "+rc+" --device iokit:1") {
+		!strings.Contains(r.err, "--remove recovery --keep password+fido2 --password-from REF --recovery-from REF --device iokit:1") || strings.Contains(hintOf(r.err), "-file") {
 		t.Fatalf("%v err=%q", r.e, r.err)
 	}
 	// The command it printed works.
@@ -270,8 +278,8 @@ func TestSlotsRemoveNamesTheSetThatIsWrong(t *testing.T) {
 		args []string
 		want string
 	}{
-		"remove side": {[]string{"--remove", "recovery+fido2", "--keep", "password"}, "--remove recovery+fido2 needs the recovery code: give --recovery-file"},
-		"keep side":   {[]string{"--remove", "password", "--keep", "recovery+fido2"}, "--keep recovery+fido2 needs the recovery code: give --recovery-file"},
+		"remove side": {[]string{"--remove", "recovery+fido2", "--keep", "password"}, "--remove recovery+fido2 needs the recovery code: give --recovery-from REF"},
+		"keep side":   {[]string{"--remove", "password", "--keep", "recovery+fido2"}, "--keep recovery+fido2 needs the recovery code: give --recovery-from REF"},
 	} {
 		r := run(nil, append([]string{"slots", "remove", path, "--password-file", pw, "--pin-file", pin}, tc.args...)...)
 		if r.e == nil || r.e.Error() != tc.want {
@@ -343,13 +351,15 @@ func TestShellWordAndSecretFlag(t *testing.T) {
 			t.Errorf("shellWord(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := secretFlag("password", "", "keychain:theca/pw"); got != "--password-from keychain:theca/pw" {
-		t.Error(got)
-	}
-	if got := secretFlag("recovery", "/r f", ""); got != "--recovery-file '/r f'" {
-		t.Error(got)
-	}
-	if got := secretFlag("recovery", "", ""); got != "--recovery-file RECOVERY_FILE" {
-		t.Error(got)
+	for from, want := range map[string]string{
+		"keychain:theca/pw":    "--password-from keychain:theca/pw",
+		"keepassxc:https://x/": "--password-from keepassxc:https://x/",
+		"file:/p w":            "--password-from REF", // a file: reference is not echoed
+		"":                     "--password-from REF", // the terminal or a file flag
+		"nonsense":             "--password-from REF",
+	} {
+		if got := secretFlag("password", from); got != want {
+			t.Errorf("secretFlag(%q) = %q, want %q", from, got, want)
+		}
 	}
 }

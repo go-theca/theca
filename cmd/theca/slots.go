@@ -78,9 +78,9 @@ func (p presented) factors(flag, value string, fs factorSet) ([]theca.Factor, er
 	for _, k := range fs.kinds {
 		f, ok := p[k]
 		if !ok {
-			name, file := "password", "--password-file"
+			name, file := "password", "--password-from REF"
 			if k == "rc" {
-				name, file = "recovery code", "--recovery-file"
+				name, file = "recovery code", "--recovery-from REF"
 			}
 			return nil, fmt.Errorf("--%s %s needs the %s: give %s", flag, value, name, file)
 		}
@@ -141,8 +141,8 @@ func slotsCmd() *cobra.Command {
 		Use:   "slots",
 		Short: "List or remove the keyslots of a container",
 		Long: "A keyslot holds nothing that says what opens it, so `list` can only say which\n" +
-			"slots the factors you present open. Secrets come from --password-file and\n" +
-			"--recovery-file, or the terminal.",
+			"slots the factors you present open. Secrets come from --password-from and\n" +
+			"--recovery-from, or the terminal.",
 	}
 	root.AddCommand(slotsListCmd(), slotsRemoveCmd())
 	return root
@@ -192,9 +192,9 @@ func slotsRemoveCmd() *cobra.Command {
 			"password+fido2 or recovery+fido2 (the key paired with that factor).\n" +
 			"--keep names a DIFFERENT set that must still open the container afterwards:\n" +
 			"it is checked before anything is written, and a removal that would leave\n" +
-			"no way in is refused. Sets are presented with --password-file and\n" +
-			"--recovery-file. A set with fido2 touches the key ONCE (--device NAME\n" +
-			"chooses it, --pin-file its PIN); the slot it opens must exist and must not\n" +
+			"no way in is refused. Sets are presented with --password-from and\n" +
+			"--recovery-from. A set with fido2 touches the key ONCE (--device NAME\n" +
+			"chooses it, --pin-from its PIN); the slot it opens must exist and must not\n" +
 			"be among the removed ones. A container the key alone opens needs --fido2\n" +
 			"as well, to be opened at all: that is a second touch.\n\n" +
 			"To make the key mandatory: --remove password --keep password+fido2.\n\n" +
