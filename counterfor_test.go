@@ -56,19 +56,18 @@ func TestCounterFor(t *testing.T) {
 	} else {
 		r.Close()
 	}
-	// A container with no counter never asks.
+	// A container with no counter never asks, and a caller that holds a
+	// counter is refused (#66): there is nothing to consult.
 	f2 := newMem(int(geo.End))
 	c2, _, err := Create(f2, CreateOptions{Sectors: testSectors, JournalEntries: testJournal, Password: []byte("pw")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	c2.Close()
-	if r, err := Open(ctx, f2, u, OpenOptions{CounterFor: func(uint32, []byte) (Counter, error) {
+	if _, err := Open(ctx, f2, u, OpenOptions{CounterFor: func(uint32, []byte) (Counter, error) {
 		t.Fatal("asked")
 		return nil, nil
-	}}); err != nil {
+	}}); !errors.Is(err, ErrCounterRequired) {
 		t.Fatal(err)
-	} else if r.Info().CounterHandle != 0 {
-		t.Fatalf("handle %#x on an unprotected container", r.Info().CounterHandle)
 	}
 }

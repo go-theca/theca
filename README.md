@@ -50,7 +50,15 @@ the machine sleeps or the session ends: logind over D-Bus on Linux, the
 screen-lock, will-sleep and session-resign notifications on macOS (delivered
 before the sleep, no polling; `theca open` says on standard error whether it
 listens or, if the notifications cannot be heard, polls every 2 s). Windows has no
-auto-close yet. `profile list` and `profile remove NAME` list and delete
+auto-close yet. On Linux only logind's own signals about this process's own
+session count (sender `org.freedesktop.login1`, the session of this process's
+pid or `XDG_SESSION_ID`), and a session that is already locked at `open` closes
+at once. If the watcher cannot start (no logind, no session), `open` fails and
+nothing stays mounted: `--close-on-lock=false` is the explicit opt-out. Limit:
+a screen locker that tells logind nothing (a bare `i3lock` or `swaylock` that
+neither calls `loginctl lock-session` nor sets the session's `LockedHint`) is
+not seen; the container then closes on sleep, shutdown or `theca close`, not on
+that lock. `profile list` and `profile remove NAME` list and delete
 profiles (the container and the manager's entries stay).
 
 ## Command line
@@ -159,7 +167,9 @@ theca serve vault.theca --credentials-out creds.json   # or: hand the account to
   (go-filesystems/exfat `FormatImage`). No decrypted copy is ever written to
   disk.
 - `serve` unlocks the container and serves its exFAT over SMB (2.1 to 3.1.1,
-  signed) using go-filesystems/smb.
+  signed) using go-filesystems/smb. The server REQUIRES message signing on
+  loopback too (`RequireSigning`), not only beyond it: a session that does not
+  sign is refused.
   - It listens on a **loopback address only** by default: the data is
     decrypted. See "Beyond loopback" below.
   - One random account is drawn per run (a random user name, `theca-` and 8
@@ -292,6 +302,12 @@ theca info   vault.theca --counter tpm --accept-rollback          # accept an ol
 theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tpm/owner   # the counter is gone: bind to a new one
 ```
 
+- Asking for the counter means requiring it. A container whose header names no
+  counter (made without one, or an older copy from before `counter rebind`
+  bound it) is refused under `--counter tpm` (or a profile's `counter = "tpm"`)
+  with "this container has no rollback counter, but --counter tpm was asked: an
+  older copy may have been restored"; a library caller that passes a counter
+  gets `ErrCounterRequired`. The TPM cannot judge a copy that never named it.
 - The counter advances once per mount, not per commit. An older copy of the
   container (any earlier session) is refused with `ErrRollback` before anything
   is written; the copy taken during the current session is the window that

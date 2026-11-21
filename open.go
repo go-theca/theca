@@ -274,6 +274,13 @@ func (c *Container) checkCounter(o OpenOptions) (counterGate, error) {
 		return counterGate{bound: true, rebind: true, ctr: ctr, id: id, derived: derived}, nil
 	}
 	if b == nil {
+		// Asking for a counter means requiring it: a header that names none,
+		// opened by a caller that holds one, is a copy from before the counter
+		// was bound (or never had one). The counter is not consulted, so
+		// nothing could tell it is old.
+		if o.Counter != nil || o.CounterFor != nil || o.CounterDerived != nil {
+			return counterGate{}, ErrCounterRequired
+		}
 		return counterGate{}, nil // "rollback-unprotected": Info.RollbackProtected is false
 	}
 	ctr := o.Counter

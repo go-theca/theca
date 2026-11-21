@@ -185,10 +185,13 @@ func Start(ctx context.Context, c *theca.Container, o Options) (*Share, error) {
 	user := newUser()
 	srv.AddUser(user, password)
 	shareOpts := []smb.ShareOption{smb.AllowUsers(user)}
+	// Every session signs, on loopback too: a local process that could answer
+	// on the port before this server, or tamper with the stream, cannot forge a
+	// reply without the session key (audit L9).
+	srv.RequireSigning = true
 	if o.Network {
-		// Beyond loopback, both or nothing: a session that does not sign and
+		// Beyond loopback, signing AND encryption: a session that does not
 		// encrypt is refused, and so is a share reached without encryption.
-		srv.RequireSigning = true
 		srv.EncryptData = true
 		shareOpts = append(shareOpts, smb.RequireEncryption())
 	}

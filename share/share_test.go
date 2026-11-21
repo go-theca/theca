@@ -256,19 +256,28 @@ func TestNetworkRequiresSigningAndEncryption(t *testing.T) {
 	}
 }
 
-// Without Network on loopback nothing is imposed: a 2.1 client is served.
-func TestLoopbackImposesNothingExtra(t *testing.T) {
+// On loopback signing is required (audit L9) and nothing more: encryption is
+// not imposed, so a 2.1 client that signs is served.
+func TestLoopbackRequiresSigningOnly(t *testing.T) {
 	c := newContainer(t, true)
 	s, err := Start(context.Background(), c, opts())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Stop()
-	fs, err := dial(t, s, 0x0210, false)
-	if err != nil {
-		t.Fatalf("a plain loopback client was refused: %v", err)
+	if !s.srv.RequireSigning || s.srv.EncryptData {
+		t.Fatalf("RequireSigning %v, EncryptData %v on loopback", s.srv.RequireSigning, s.srv.EncryptData)
 	}
-	fs.Umount()
+	for _, dialect := range []uint16{0x0210, 0x0302, 0x0311} {
+		fs, err := dial(t, s, dialect, false)
+		if err != nil {
+			t.Fatalf("dialect %#x: a loopback client was refused: %v", dialect, err)
+		}
+		if err := fs.WriteFile("hello.txt", []byte("signed"), 0o644); err != nil {
+			t.Fatalf("dialect %#x: %v", dialect, err)
+		}
+		fs.Umount()
+	}
 }
 
 func TestShareEndsOnAFailure(t *testing.T) {

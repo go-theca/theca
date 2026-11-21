@@ -393,7 +393,11 @@ func runDaemon(cmd *cobra.Command, name string, ready io.Writer) error {
 		var lerr error
 		lockwatch.LogTo(cmd.ErrOrStderr())
 		if locked, lerr = watchLock(ctx); lerr != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: close-on-lock: %v; close it with `theca close %s`\n", lerr, name)
+			// Fail closed: a container that was to close when the screen
+			// locks must not stay mounted with nothing watching. The
+			// person who wants it anyway says so.
+			srv.Shutdown()
+			return errors.Join(fmt.Errorf("close-on-lock: %w; the container was closed again, not left mounted unprotected (open it without lock detection with --close-on-lock=false)", lerr), d.Close())
 		}
 	}
 	if err := session.Report(ready, session.Response{OK: true, Info: &d.info}); err != nil {

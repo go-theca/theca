@@ -282,6 +282,8 @@ func (f *tpmFlags) hint(err error) error {
 			"(a wrong password does not count toward the TPM's dictionary-attack lockout, TCG Part 1 rev 1.59, 19.8.1)", err)
 	case errors.Is(err, theca.ErrCounterIdentity):
 		return fmt.Errorf("%w: %s", err, identityRecovery)
+	case errors.Is(err, theca.ErrCounterRequired):
+		return fmt.Errorf("%w (--counter %s); to bind it to a counter, `theca counter rebind FILE --counter tpm`", err, f.counter)
 	case errors.Is(err, theca.ErrCounter) && f.counter == "":
 		return fmt.Errorf("%w: this container is bound to a TPM counter, give --counter tpm", err)
 	case errors.Is(err, tpmcounter.ErrNoCounter), errors.Is(err, tpmcounter.ErrNotCounter), errors.Is(err, theca.ErrCounter):

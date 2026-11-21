@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.24.0
+
+### Security
+
+- A counter asked for is a counter required (go-theca/theca#66). A container made without
+  a counter and bound later by `counter rebind` left every earlier copy with a header naming
+  no counter; restored over the file, such a copy opened under `--counter tpm` (exit 0, only
+  a note) and the TPM was never consulted. `theca.Open` now refuses with the new
+  `ErrCounterRequired` when `Counter`, `CounterFor` or `CounterDerived` is given and the
+  header names none, and the command line says: "this container has no rollback counter, but
+  --counter tpm was asked: an older copy may have been restored". With no counter asked, a
+  container with none still opens (with the note). BEHAVIOUR CHANGE: a caller that handed a
+  counter to a counter-less container used to have it ignored.
+- `close-on-lock` fails closed: if the lock watcher cannot start, `open` closes the container
+  again and fails, naming `--close-on-lock=false` as the explicit opt-out, instead of leaving
+  it mounted with a warning.
+- Linux lock watcher: only logind's signals count (sender `org.freedesktop.login1`, matched on
+  the bus and checked on the signal) and only for this process's own session (found by
+  `GetSessionByPID`, else `XDG_SESSION_ID`); the session's `LockedHint` is read at start, so an
+  already-locked session closes at once. A locker that sets nothing in logind is not seen (see
+  the README).
+- `profile.Validate` bounds every written line to `MaxLineBytes`, so `Add` refuses what
+  `Parse` would refuse later (a profile that made the whole file unreadable).
+- The loopback SMB share requires message signing (it was only offered); the README said
+  "signed".
+
 ## v0.23.0
 
 - `session.Start(ctx, exe, name, notice)` (go-theca/gui#12): the spawn of the background
