@@ -35,7 +35,7 @@ func enrollKeyCmd() *cobra.Command {
 		Use:   "enroll-key FILE",
 		Short: "Pair the attached FIDO2 security key with the password (and the recovery code)",
 		Long: "Pair the attached FIDO2 security key with the password, and with the\n" +
-			"recovery code too when --recovery-file names it. The key makes one\n" +
+			"recovery code too when --recovery-from names it. The key makes one\n" +
 			"discoverable credential and is touched twice: to register, then to confirm.\n" +
 			"Nothing about the key is written into the container but its pairwise slots.\n\n" +
 			"Pairing only ADDS a way in: under policy any the password alone (and the\n" +
@@ -63,7 +63,7 @@ func enrollKeyCmd() *cobra.Command {
 				return err
 			}
 			if require && len(u.Password) == 0 {
-				return errors.New("--require removes the password-only slot, so it needs the password: give --password-file")
+				return errors.New("--require removes the password-only slot, so it needs the password: give --password-from REF")
 			}
 			// The partner factors, derived from the same secrets that open it.
 			var partners []theca.Factor
@@ -143,7 +143,7 @@ var (
 var readTerminal = func(cmd *cobra.Command, prompt string) ([]byte, error) {
 	fd := int(os.Stdin.Fd())
 	if !isTerminal(fd) {
-		return nil, errors.New("no terminal to ask for a secret: use --password-file, --password-from, --recovery-file or --recovery-from")
+		return nil, errors.New("no terminal to ask for a secret: use --password-from or --recovery-from")
 	}
 	fmt.Fprint(cmd.ErrOrStderr(), prompt)
 	b, err := readPassword(fd)
@@ -667,7 +667,7 @@ func importCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !s.passwordGiven() && !s.recoveryGiven() {
-				return errors.New("import reads the data from standard input: give --password-file, --password-from, --recovery-file or --recovery-from")
+				return errors.New("import reads the data from standard input: give --password-from or --recovery-from")
 			}
 			c, f, err := open(cmd, args[0], &s, true)
 			if err != nil {
