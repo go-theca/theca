@@ -386,7 +386,6 @@ func TestConnectTBS(t *testing.T) {
 		t.Fatalf("open error: %v %v", err, tp)
 	}
 
-
 	openTBS = func() (transport, error) { return ft, nil }
 	tp, closeFn, err := connect(TBSDevice)
 	if err != nil || tp == nil {
