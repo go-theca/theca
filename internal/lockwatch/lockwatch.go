@@ -14,7 +14,11 @@
 // clock. Other systems have no source: Watch says ErrUnsupported and the caller says so.
 package lockwatch
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"io"
+)
 
 // ErrUnsupported is returned where no lock or sleep source is implemented.
 var ErrUnsupported = errors.New("lockwatch: no screen-lock or sleep notification on this system")
@@ -22,6 +26,13 @@ var ErrUnsupported = errors.New("lockwatch: no screen-lock or sleep notification
 // Logf says which detection mode is active (notifications or polling). The
 // caller points it at the person's terminal; it is silent by default.
 var Logf = func(format string, args ...any) {}
+
+// LogTo makes Logf write one line per message to w.
+func LogTo(w io.Writer) {
+	Logf = func(format string, args ...any) {
+		fmt.Fprintf(w, format+"\n", args...)
+	}
+}
 
 // Watch returns a channel that receives one reason ("lock", "sleep",
 // "shutdown") when the person has gone, and is closed when ctx ends. Replaced

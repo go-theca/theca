@@ -428,9 +428,7 @@ func runDaemon(cmd *cobra.Command, name string, ready io.Writer) error {
 	var locked <-chan string
 	if p.CloseOnLock {
 		var lerr error
-		lockwatch.Logf = func(format string, args ...any) {
-			fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...)
-		}
+		lockwatch.LogTo(cmd.ErrOrStderr())
 		if locked, lerr = watchLock(ctx); lerr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: close-on-lock: %v; close it with `theca close %s`\n", lerr, name)
 		}
