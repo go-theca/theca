@@ -141,7 +141,7 @@ func (f *fakeKey) GetAssertions(_ context.Context, r authn.GetAssertionRequest, 
 
 func (f *fakeKey) Close() error { f.closed = true; return nil }
 
-func pinFn(p string) func() (string, error) { return func() (string, error) { return p, nil } }
+func pinFn(p string) func() ([]byte, error) { return func() ([]byte, error) { return []byte(p), nil } }
 
 // lastConfig is what the last Open asked openKey for.
 var lastConfig config
@@ -284,7 +284,7 @@ func TestEnrollAndDeriveErrors(t *testing.T) {
 	cases := map[string]struct {
 		uv     bool
 		mutate func(f *fakeKey)
-		pin    func() (string, error)
+		pin    func() ([]byte, error)
 		want   error
 		derive bool
 	}{
@@ -292,7 +292,7 @@ func TestEnrollAndDeriveErrors(t *testing.T) {
 		"retries unreadable":   {mutate: func(f *fakeKey) { f.retriesErr = boom }, want: boom},
 		"PIN at zero":          {mutate: func(f *fakeKey) { f.retries.PIN = 0 }, want: ErrPINLocked},
 		"power cycle":          {mutate: func(f *fakeKey) { f.retries.PowerCycle = true }, want: ErrPINLocked},
-		"PIN not given":        {mutate: func(*fakeKey) {}, pin: func() (string, error) { return "", boom }, want: boom},
+		"PIN not given":        {mutate: func(*fakeKey) {}, pin: func() ([]byte, error) { return nil, boom }, want: boom},
 		"PIN refused":          {mutate: func(f *fakeKey) { f.pinErr = other }, want: other},
 		"PIN blocked":          {mutate: func(f *fakeKey) { f.pinErr = blocked }, want: ErrPINLocked},
 		"UV not touched":       {uv: true, mutate: func(f *fakeKey) { f.uvErr = denied }, want: ErrNotTouched},
@@ -365,7 +365,7 @@ func (f *failSecondUV) UVToken(ctx context.Context, p authn.PINProtocol, perm au
 func statusErr(s authn.Status) error { return &authn.StatusError{Status: s} }
 
 // bio is a Bio-like fake: uv configured and a PIN set.
-func bio(t *testing.T, f *fakeKey, pin func() (string, error)) (*Device, *[]string) {
+func bio(t *testing.T, f *fakeKey, pin func() ([]byte, error)) (*Device, *[]string) {
 	t.Helper()
 	f.info.Options["uv"] = true
 	withFake(t, f, nil)
@@ -459,9 +459,9 @@ func TestARetryShowsTheTriesLeftAndThenSucceeds(t *testing.T) {
 }
 
 func TestNoPINToFallBackToIsAnErrorNotAHang(t *testing.T) {
-	for name, mk := range map[string]func(f *fakeKey) func() (string, error){
-		"no PIN function": func(*fakeKey) func() (string, error) { return nil },
-		"no PIN set":      func(f *fakeKey) func() (string, error) { delete(f.info.Options, "clientPin"); return pinFn("1") },
+	for name, mk := range map[string]func(f *fakeKey) func() ([]byte, error){
+		"no PIN function": func(*fakeKey) func() ([]byte, error) { return nil },
+		"no PIN set":      func(f *fakeKey) func() ([]byte, error) { delete(f.info.Options, "clientPin"); return pinFn("1") },
 	} {
 		f := newFake(false)
 		f.uvSeq = []error{statusErr(statusUVBlocked)}

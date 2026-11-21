@@ -80,7 +80,7 @@ func TestWindowsEnrollThenDeriveAgree(t *testing.T) {
 	w := goodWin()
 	withWindows(t, w)
 	pinCalled := false
-	d, err := Open(ctx, func() (string, error) { pinCalled = true; return "x", nil })
+	d, err := Open(ctx, func() ([]byte, error) { pinCalled = true; return []byte("x"), nil })
 	if err != nil {
 		t.Fatal(err)
 	}

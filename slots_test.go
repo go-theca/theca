@@ -15,7 +15,7 @@ func factorsOf(t *testing.T, f *memFile, code string) (pw, rc Factor) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc, err = RecoveryFactor(code)
+	rc, err = RecoveryFactor([]byte(code))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestRemoveFactorsByRecoveryCode(t *testing.T) {
 		t.Fatalf("Slots after %v", got)
 	}
 	c.Close()
-	if opens(t, f, Unlock{Recovery: code}) {
+	if opens(t, f, Unlock{Recovery: []byte(code)}) {
 		t.Fatal("the removed recovery code still opens the container")
 	}
 	if !opens(t, f, pwUnlock()) {
@@ -91,7 +91,7 @@ func TestRemoveFactorsRefusals(t *testing.T) {
 	}
 	// Still opens with both.
 	c.Close()
-	if !opens(t, f, pwUnlock()) || !opens(t, f, Unlock{Recovery: code}) {
+	if !opens(t, f, pwUnlock()) || !opens(t, f, Unlock{Recovery: []byte(code)}) {
 		t.Fatal("a refusal changed the slots")
 	}
 }
@@ -178,7 +178,7 @@ func TestRemoveFactorsCrashAtEveryWrite(t *testing.T) {
 			t.Fatalf("cut %d: the password no longer opens it", cut)
 		}
 		if err == nil {
-			if opens(t, img, Unlock{Recovery: code}) {
+			if opens(t, img, Unlock{Recovery: []byte(code)}) {
 				t.Fatal("removed code still opens")
 			}
 			if cut < 2 {

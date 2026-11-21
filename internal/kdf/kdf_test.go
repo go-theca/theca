@@ -274,7 +274,10 @@ func TestErrors(t *testing.T) {
 
 func TestKeysExpandsOneKEKIntoThreeDistinctKeys(t *testing.T) {
 	kek := KEK(rep(5, 32), "pw")
-	k := Keys(&kek)
+	k, err := Keys(&kek)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if k.Kc == k.Ka || k.Ka == k.Km || k.Kc == k.Km {
 		t.Fatal("expanded keys repeat")
 	}
@@ -289,7 +292,8 @@ func TestKeysExpandsOneKEKIntoThreeDistinctKeys(t *testing.T) {
 		t.Fatal("Keys differs from RFC 5869")
 	}
 	kek2 := KEK(rep(6, 32), "pw")
-	if *Keys(&kek2) == *k {
+	k2, _ := Keys(&kek2)
+	if bytes.Equal(k2.Bytes(), k.Bytes()) {
 		t.Fatal("different KEKs gave equal keys")
 	}
 }

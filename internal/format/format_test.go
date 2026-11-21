@@ -327,7 +327,7 @@ func TestRecoveryCode(t *testing.T) {
 	}
 	for _, in := range []string{printed, strings.ToLower(printed), strings.ReplaceAll(printed, "-", " "),
 		strings.ReplaceAll(printed, "-", "") + "\n"} {
-		got, err := ParseRecoveryCode(in)
+		got, err := ParseRecoveryCode([]byte(in))
 		if err != nil || !bytes.Equal(got, raw) {
 			t.Fatalf("%q: %v", in, err)
 		}
@@ -341,7 +341,7 @@ func TestRecoveryCode(t *testing.T) {
 				continue
 			}
 			bad := plain[:i] + string(c) + plain[i+1:]
-			if _, err := ParseRecoveryCode(bad); err == nil {
+			if _, err := ParseRecoveryCode([]byte(bad)); err == nil {
 				t.Fatalf("substitution at %d to %c accepted", i, c)
 			}
 		}
@@ -352,12 +352,12 @@ func TestRecoveryCode(t *testing.T) {
 			continue
 		}
 		bad := plain[:i] + string(plain[i+1]) + string(plain[i]) + plain[i+2:]
-		if _, err := ParseRecoveryCode(bad); err == nil {
+		if _, err := ParseRecoveryCode([]byte(bad)); err == nil {
 			t.Fatalf("transposition at %d accepted", i)
 		}
 	}
 	for _, bad := range []string{"", "A", plain[:32], plain + "A", strings.Repeat("1", 33), strings.Repeat("!", 33)} {
-		if _, err := ParseRecoveryCode(bad); !errors.Is(err, ErrRecoveryCode) {
+		if _, err := ParseRecoveryCode([]byte(bad)); !errors.Is(err, ErrRecoveryCode) {
 			t.Errorf("%q: %v", bad, err)
 		}
 	}
@@ -417,7 +417,7 @@ func TestRecoveryCodeMatchesReference(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := ParseRecoveryCode(printed)
+		got, err := ParseRecoveryCode([]byte(printed))
 		if err != nil || !bytes.Equal(got, raw) {
 			t.Fatalf("%q: %v", printed, err)
 		}
@@ -429,7 +429,7 @@ func TestRecoveryCodeMatchesReference(t *testing.T) {
 	for i := 0; i < 33; i++ {
 		for c := 0; c < 256; c++ {
 			s := plain[:i] + string([]byte{byte(c)}) + plain[i+1:]
-			got, err := ParseRecoveryCode(s)
+			got, err := ParseRecoveryCode([]byte(s))
 			want, ok := referenceParse(s)
 			if (err == nil) != ok || !bytes.Equal(got, want) {
 				t.Fatalf("position %d byte %#x: got %x %v, reference %x %v", i, c, got, err, want, ok)
@@ -444,7 +444,7 @@ func FuzzParseRecoveryCode(f *testing.F) {
 	f.Add(strings.ToLower(printed))
 	f.Add("")
 	f.Fuzz(func(t *testing.T, s string) {
-		raw, err := ParseRecoveryCode(s)
+		raw, err := ParseRecoveryCode([]byte(s))
 		want, ok := referenceParse(s)
 		if (err == nil) != ok || !bytes.Equal(raw, want) {
 			t.Fatalf("%q: got %x %v, reference %x %v", s, raw, err, want, ok)
