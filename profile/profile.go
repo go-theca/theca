@@ -163,6 +163,15 @@ func (p Profile) Validate() error {
 	if p.Sync <= 0 || p.Sync > time.Hour {
 		return fmt.Errorf("sync %s: want more than 0 and at most 1h", p.Sync)
 	}
+	// Parse refuses a line over MaxLineBytes: so must Add, or the profile would
+	// be written and the whole file then refused at every later read. The
+	// lines are the ones Marshal writes, after quoting.
+	for _, line := range strings.Split(string(Marshal(map[string]Profile{p.Name: p})), "\n") {
+		if len(line) > MaxLineBytes {
+			key, _, _ := strings.Cut(line, " ")
+			return fmt.Errorf("%s: longer than %d bytes once written", key, MaxLineBytes)
+		}
+	}
 	return nil
 }
 

@@ -91,6 +91,34 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// Add refuses what Parse would later refuse (audit L8): a reference whose line
+// is longer than MaxLineBytes once written. At the limit it is accepted and the
+// file reads back.
+func TestValidateBoundsTheWrittenLine(t *testing.T) {
+	line := func(ref string) int { return len("password-from = ") + len(quote(ref)) }
+	prefix := "keychain:theca/"
+	fits := prefix + strings.Repeat("a", MaxLineBytes-line(prefix))
+	if line(fits) != MaxLineBytes {
+		t.Fatalf("test arithmetic: %d", line(fits))
+	}
+	p := good()
+	p.PasswordFrom = fits
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a line of exactly %d bytes refused: %v", MaxLineBytes, err)
+	}
+	if _, err := Parse(Marshal(map[string]Profile{p.Name: p})); err != nil {
+		t.Fatalf("what Validate accepts, Parse refuses: %v", err)
+	}
+	p.PasswordFrom = fits + "a"
+	err := p.Validate()
+	if err == nil || !strings.Contains(err.Error(), "password-from") {
+		t.Fatalf("a line of %d bytes accepted: %v", MaxLineBytes+1, err)
+	}
+	if _, perr := Parse(Marshal(map[string]Profile{p.Name: p})); perr == nil {
+		t.Fatal("control: Parse accepts the line Validate refuses")
+	}
+}
+
 func TestParseRefusals(t *testing.T) {
 	long := strings.Repeat("a", MaxLineBytes+1)
 	bad := []string{

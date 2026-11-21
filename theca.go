@@ -50,11 +50,16 @@ var (
 	ErrRollback = errors.New("theca: container is older than the rollback counter (use AcceptRollback to rebind)")
 	// ErrCounter: the counter given does not match the one the header names.
 	ErrCounter = errors.New("theca: rollback counter missing or not the one recorded in the header")
-	ErrRange   = errors.New("theca: offset or length out of range")
-	ErrBroken  = errors.New("theca: container failed an earlier write and must be reopened")
-	ErrClosed  = errors.New("theca: container is closed")
-	ErrNoSlot  = errors.New("theca: no free keyslot")
-	ErrOption  = errors.New("theca: invalid option")
+	// ErrCounterRequired: a counter was asked for (OpenOptions.Counter,
+	// CounterFor or CounterDerived) and the header names none: the container
+	// was made without one, or an older copy from before `counter rebind` was
+	// restored. Asking for a counter means requiring it.
+	ErrCounterRequired = errors.New("theca: this container has no rollback counter, but one was asked: an older copy may have been restored")
+	ErrRange           = errors.New("theca: offset or length out of range")
+	ErrBroken          = errors.New("theca: container failed an earlier write and must be reopened")
+	ErrClosed          = errors.New("theca: container is closed")
+	ErrNoSlot          = errors.New("theca: no free keyslot")
+	ErrOption          = errors.New("theca: invalid option")
 	// ErrNoCredential is returned by a FIDO2 provider whose key holds no
 	// Theca credential. It is routine during unlock and not an error.
 	ErrNoCredential = errors.New("theca: authenticator holds no theca credential")

@@ -319,29 +319,32 @@ func TestDaemonLockOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-done
-	// A system without a lock source warns and keeps running.
+	// A system without a lock source fails closed: the daemon reports the
+	// error to its parent, the container is closed again and the message names
+	// the explicit opt-out.
 	e.add(t, "warn", path, "--share", "w")
+	fs2 := &fakeShare{mount: "/m", done: make(chan struct{})}
+	withFakeShare(t, fs2, nil)
 	watchLock = func(context.Context) (<-chan string, error) { return nil, errors.New("no bus") }
-	var errOut strings.Builder
 	r, w, _ := os.Pipe()
 	readyFile = func() *os.File { return w }
+	t.Cleanup(func() { r.Close() })
 	c := RootCmd()
 	c.SetArgs([]string{"_serve", "warn"})
-	c.SetErr(&errOut)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	fin := make(chan error, 1)
 	go func() { fin <- c.ExecuteContext(ctx) }()
-	if _, err := session.DecodeResponse(r); err != nil {
-		t.Fatal(err)
+	resp, err := session.DecodeResponse(r)
+	if err != nil || resp.OK {
+		t.Fatalf("the daemon reported success without a lock watcher: %+v %v", resp, err)
 	}
-	sp, _ := socketPath("warn")
-	if err := session.Close(context.Background(), sp); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(resp.Error, "no bus") || !strings.Contains(resp.Error, "--close-on-lock=false") {
+		t.Fatalf("the error does not name the cause and the opt-out: %q", resp.Error)
 	}
-	if err := <-fin; err != nil || !strings.Contains(errOut.String(), "close-on-lock: no bus") {
-		t.Fatalf("%v %q", err, errOut.String())
+	if err := <-fin; err == nil || !fs2.stopped {
+		t.Fatalf("daemon returned %v, share stopped %v: left mounted", err, fs2.stopped)
 	}
-	cancel()
 }
 
 func TestDaemonFailures(t *testing.T) {

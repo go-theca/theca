@@ -1041,10 +1041,9 @@ func TestNoCounterIsStatedPlainly(t *testing.T) {
 	if r.Info().RollbackProtected {
 		t.Fatal("a container with no counter claims rollback protection")
 	}
-	// A counter handed to a container that does not use one is ignored, not
-	// silently bound.
-	r2, err := Open(ctx, f, pwUnlock(), OpenOptions{Counter: &fakeCounter{}})
-	if err != nil || r2.Info().RollbackProtected {
+	// A counter handed to a container that does not use one is refused, not
+	// ignored and not silently bound (#66).
+	if _, err := Open(ctx, f, pwUnlock(), OpenOptions{Counter: &fakeCounter{}}); !errors.Is(err, ErrCounterRequired) {
 		t.Fatalf("%v", err)
 	}
 }
