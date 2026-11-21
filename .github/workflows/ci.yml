@@ -68,6 +68,9 @@ jobs:
 
       - run: go vet ./...
 
+      # Windows and Linux compile the unix-only files differently: vet both.
+      - run: GOOS=windows go vet ./...
+
       # A software TPM runs the counter end to end (tpmcounter, cmd/theca). A
       # missing swtpm is a failure here, not a skip.
       - name: Install swtpm
