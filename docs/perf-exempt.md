@@ -71,3 +71,5 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `session.Server.Shutdown`: closes the listener and removes the socket file.
 - `session.Status`: one Unix-socket round trip of two short lines.
 - `session.Close`: one Unix-socket round trip; it waits for the unmount and the commit, which are `share.Share.Stop` and `Container.Sync`.
+- `session.Start`: starts one process, once per `open`; it waits for the unlock (a Argon2id derivation and a key touch, measured elsewhere).
+- `session.StartAttached`: the same, with the terminal's streams.

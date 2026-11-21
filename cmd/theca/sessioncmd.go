@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"text/tabwriter"
@@ -38,7 +37,6 @@ var (
 	detach     = detachStdio
 	lockFile   = lockContainer
 	executable = os.Executable
-	osPipe     = os.Pipe
 	absPath    = filepath.Abs
 )
 
@@ -282,42 +280,7 @@ func spawnDaemon(ctx context.Context, name string, stderr *os.File) (session.Inf
 	if err != nil {
 		return session.Info{}, err
 	}
-	r, w, err := osPipe()
-	if err != nil {
-		return session.Info{}, err
-	}
-	defer r.Close()
-	child := exec.Command(exe, "_serve", name)
-	child.Stdin, child.Stdout, child.Stderr = os.Stdin, stderr, stderr
-	child.ExtraFiles = []*os.File{w}
-	err = child.Start()
-	w.Close()
-	if err != nil {
-		return session.Info{}, err
-	}
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-ctx.Done():
-			child.Process.Kill()
-		case <-stop:
-		}
-	}()
-	resp, err := session.DecodeResponse(r)
-	if err != nil || !resp.OK || resp.Info == nil {
-		child.Process.Kill()
-		child.Wait()
-		switch {
-		case ctx.Err() != nil:
-			return session.Info{}, fmt.Errorf("open %s: %w", name, ctx.Err())
-		case err == nil && resp.Error != "":
-			return session.Info{}, errors.New(resp.Error)
-		}
-		return session.Info{}, fmt.Errorf("open %s: the background process ended without opening the container", name)
-	}
-	child.Process.Release()
-	return *resp.Info, nil
+	return session.StartAttached(ctx, exe, name, os.Stdin, stderr)
 }
 
 // secretsOf turns a profile into the flags `theca serve` would have been given.

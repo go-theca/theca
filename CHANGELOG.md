@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.23.0
+
+- `session.Start(ctx, exe, name, notice)` (go-theca/gui#12): the spawn of the background
+  process of `theca open` moves from `cmd/theca` into the importable `session` package, so a
+  program other than the command line (the GUI) opens a profile with the same code. The process
+  has no terminal; each line it writes to standard error while it unlocks (the key's "touch"
+  notice) reaches `notice`, in order, until `Start` returns. `session.StartAttached` is the
+  terminal form that `theca open` uses; its behaviour is unchanged.
+
 ## v0.22.0
 
 - macOS `close-on-lock` is event-driven (go-theca/theca#59): `com.apple.screenIsLocked`
