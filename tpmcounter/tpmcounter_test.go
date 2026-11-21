@@ -379,12 +379,14 @@ func TestConnectTBS(t *testing.T) {
 	old := openTBS
 	t.Cleanup(func() { openTBS = old })
 
-	openTBS = func() (transport, error) { return nil, boom }
-	if _, _, err := connect(TBSDevice); !errors.Is(err, boom) {
-		t.Fatalf("open error: %v", err)
+	// A transport comes back with the error: it must still be refused.
+	ft := &fakeTransport{}
+	openTBS = func() (transport, error) { return ft, boom }
+	if tp, closeFn, err := connect(TBSDevice); !errors.Is(err, boom) || tp != nil || closeFn != nil {
+		t.Fatalf("open error: %v %v", err, tp)
 	}
 
-	ft := &fakeTransport{}
+
 	openTBS = func() (transport, error) { return ft, nil }
 	tp, closeFn, err := connect(TBSDevice)
 	if err != nil || tp == nil {
