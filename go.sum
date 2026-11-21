@@ -50,8 +50,8 @@ github.com/go-macos/keychain v0.3.1 h1:pH/sxiVCTqj2rafKiWsufWKrRlHZ7YRNiePgrMieR
 github.com/go-macos/keychain v0.3.1/go.mod h1:R+xl/40QhjhgzncuCdZLe/fRvg9UEeOIvOzMxtymHs4=
 github.com/go-macos/netfs v0.1.0 h1:2ZxuEmgVPIjEqwIOdkv/j23w03QzpGToxUizmLy9mz8=
 github.com/go-macos/netfs v0.1.0/go.mod h1:xk8N/niL/KKIEPV0XSVe1on92Drr1wBAXwtkOt+alCQ=
-github.com/go-macos/objc v0.12.0 h1:/WmB4C1CQd5RkqBRvnHNljEFtOTvytPA9fkD87xuJVQ=
-github.com/go-macos/objc v0.12.0/go.mod h1:ao+SmTFBrkZdP+488hFTrSFvCtJ36McKKhNNOlcFXrQ=
+github.com/go-macos/objc v0.13.0 h1:c7dvIpoHa94F8LSol0fXuf58nv++vwen9Z89jEfxAWw=
+github.com/go-macos/objc v0.13.0/go.mod h1:ao+SmTFBrkZdP+488hFTrSFvCtJ36McKKhNNOlcFXrQ=
 github.com/go-mswin/webauthn v0.5.0 h1:3Xiqe7ksxsUgcr+q65LF5SmuMyEW1/In99PeqNGD2Ig=
 github.com/go-mswin/webauthn v0.5.0/go.mod h1:LEZGuO/qLKre7TsDBmgcILgZAsEffhZpjV7TQqzoJpc=
 github.com/go-mswin/win32 v0.7.0 h1:f4zB7/7NhRQ9XTsH20pe0ogcFTgpOvq358WHHn2Mi3Y=

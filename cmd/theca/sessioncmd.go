@@ -374,7 +374,7 @@ func serveProfileCmd() *cobra.Command {
 				return errors.New("_serve is started by `theca open`")
 			}
 			defer ready.Close()
-			err := runDaemon(cmd, args[0], ready)
+			err := onMainThread(func() error { return runDaemon(cmd, args[0], ready) })
 			if err != nil {
 				// Tell the parent, if it still listens; after the ready line
 				// this is a second line nobody reads.
@@ -428,6 +428,7 @@ func runDaemon(cmd *cobra.Command, name string, ready io.Writer) error {
 	var locked <-chan string
 	if p.CloseOnLock {
 		var lerr error
+		lockwatch.LogTo(cmd.ErrOrStderr())
 		if locked, lerr = watchLock(ctx); lerr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: close-on-lock: %v; close it with `theca close %s`\n", lerr, name)
 		}
