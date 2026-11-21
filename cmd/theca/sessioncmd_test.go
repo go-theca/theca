@@ -269,7 +269,7 @@ func TestCloseReportsFailure(t *testing.T) {
 func TestDaemonEnds(t *testing.T) {
 	hardened := 0
 	saved := platformHarden
-	platformHarden = func() error { hardened++; return nil }
+	platformHarden = func() error { hardened++; return saved() }
 	defer func() {
 		platformHarden = saved
 		if hardened != 3 {

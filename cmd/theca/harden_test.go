@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"unsafe"
@@ -12,7 +13,14 @@ import (
 
 // The in-process daemon tests must not deny a debugger to the test binary, nor
 // drop its core limit: they run hardenProcess with the platform call replaced.
-func init() { platformHarden = func() error { return nil } }
+//
+// THECA_TEST_REAL_HARDEN=1 keeps the real call, to run the daemon tests with
+// the protections on (go-theca/theca#68 measurement).
+func init() {
+	if os.Getenv("THECA_TEST_REAL_HARDEN") == "" {
+		platformHarden = func() error { return nil }
+	}
+}
 
 // The recovery code is carried as bytes and wiped with the password.
 func TestUnlockWipesThePasswordAndTheRecoveryCode(t *testing.T) {

@@ -949,6 +949,13 @@ from one version, suite or purpose is never valid in another.
 - **Secrets in memory**: Go's GC may copy. We keep keys in fixed slices,
   zeroise on unmount, and document the limit. Whether newer Go releases offer
   a supported secret-erasure facility is to be checked, not assumed.
+  Since v0.25.0 (#68): the password, PIN and recovery code are `[]byte`, wiped
+  after use; the pages of the master secret and the wrap keys are `mlock`ed
+  (best effort, `--mlock=required` to refuse); the session daemon sets
+  `RLIMIT_CORE` 0 and `PR_SET_DUMPABLE` 0 (Linux) or `PT_DENY_ATTACH` (macOS).
+  Not covered: the AES round keys in go-encryptions/ctr, transient KEKs on the
+  stack, `crypto/hmac` pads, and the one `string` copy of the PIN at the
+  go-authn/fido call.
 - **Failure modes**: wrong password and corrupted container produce the
   same error up to the slot stage (no oracle). After unlock, a tag failure is
   an I/O error naming the sector, never silently zero data.
