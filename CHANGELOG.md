@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.25.0
+
+### Security
+
+- Key memory hardening (go-theca/theca#68).
+  - The PIN and the recovery code are `[]byte` end to end and cleared after use, like the
+    password. BREAKING for library callers: `Unlock.Recovery` is `[]byte`,
+    `RecoveryFactor` and `format.ParseRecoveryCode` take `[]byte`, and the `fido2` PIN
+    callbacks return `[]byte` (the callee wipes it). One `string` copy remains at the
+    go-authn/fido `PINToken` call.
+  - The pages holding the master secret, the slot wrap keys and their caches are `mlock`ed
+    (new `internal/memlock`, per-page counts). `--mlock=auto` (default) reports a refusal
+    once; `--mlock=required` makes it an error; `--mlock=off` disables it. The daemon gets
+    the mode of the `open` that started it.
+  - `theca _serve` sets `RLIMIT_CORE` to 0 and `PR_SET_DUMPABLE` to 0 (Linux), or
+    `RLIMIT_CORE` to 0 and `PT_DENY_ATTACH` (macOS). A refusal is a warning.
+
 ## v0.24.0
 
 ### Security

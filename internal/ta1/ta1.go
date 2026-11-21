@@ -15,8 +15,10 @@ import (
 	"hash"
 	"io"
 	"sync"
+	"unsafe"
 
 	"github.com/go-encryptions/ctr"
+	"github.com/go-theca/theca/internal/memlock"
 	"golang.org/x/crypto/chacha20"
 )
 
@@ -65,6 +67,25 @@ type Keys struct {
 	Km [KeySize]byte // HMAC-SHA-256
 
 	c *cache // keyed state built once, not per sector (go-theca/theca#8, #9)
+
+	// mem holds the pages of the keys and of the cache out of swap
+	// (go-theca/theca#68); Zeroize releases them.
+	mem [2]*memlock.Region
+}
+
+// pin keeps the pages that hold k and its cache out of swap, per the memlock
+// mode: a refusal is an error only in Required mode. The AES round keys live in
+// go-encryptions/ctr and are not pinned.
+func (k *Keys) pin() error {
+	var err error
+	if k.mem[0], err = memlock.Lock(unsafe.Pointer(k), unsafe.Sizeof(*k)); err != nil {
+		return err
+	}
+	if k.mem[1], err = memlock.Lock(unsafe.Pointer(k.c), unsafe.Sizeof(*k.c)); err != nil {
+		k.mem[0].Release()
+		k.mem[0] = nil
+	}
+	return err
 }
 
 // cache holds the AES key schedule and the keyed HMAC state, so a sector
@@ -113,14 +134,17 @@ const MSSize = 3 * KeySize
 
 // Generate draws three independent keys from r.
 func Generate(r io.Reader) (*Keys, error) {
-	k := Keys{c: newCache()}
+	k := &Keys{c: newCache()}
+	if err := k.pin(); err != nil {
+		return nil, err
+	}
 	for _, p := range []*[KeySize]byte{&k.Kc, &k.Ka, &k.Km} {
 		if _, err := io.ReadFull(r, p[:]); err != nil {
 			k.Zeroize()
 			return nil, fmt.Errorf("%w: %v", ErrNoRand, err)
 		}
 	}
-	return &k, nil
+	return k, nil
 }
 
 // FromBytes parses a 96-byte master secret.
@@ -128,11 +152,14 @@ func FromBytes(b []byte) (*Keys, error) {
 	if len(b) != MSSize {
 		return nil, fmt.Errorf("ta1: master secret is %d bytes, want %d", len(b), MSSize)
 	}
-	k := Keys{c: newCache()}
+	k := &Keys{c: newCache()}
+	if err := k.pin(); err != nil {
+		return nil, err
+	}
 	copy(k.Kc[:], b[:KeySize])
 	copy(k.Ka[:], b[KeySize:2*KeySize])
 	copy(k.Km[:], b[2*KeySize:])
-	return &k, nil
+	return k, nil
 }
 
 // Bytes serialises the master secret.
@@ -160,6 +187,10 @@ func (k *Keys) Zeroize() {
 		c.mu.Unlock()
 		k.c = nil
 	}
+	// The keys are zero now: the pages may go back to the pager.
+	k.mem[0].Release()
+	k.mem[1].Release()
+	k.mem = [2]*memlock.Region{}
 }
 
 // Cascade sets dst = src XOR XChaCha20(Kc, seed[0:24]) XOR AES-256-CTR(Ka,

@@ -39,9 +39,12 @@ func SealWrap(ms *ta1.Keys, kek *[32]byte, index int, rng io.Reader) ([]byte, er
 	}
 	plain := make([]byte, wrapPlain)
 	copy(plain, ms.Bytes())
-	wk := kdf.Keys(kek)
-	defer wk.Zeroize()
 	defer clear(plain)
+	wk, err := kdf.Keys(kek)
+	if err != nil {
+		return nil, err
+	}
+	defer wk.Zeroize()
 	return wk.Seal(ta1.LabelSlot, slotAD(index), plain, rng)
 }
 
@@ -50,7 +53,10 @@ func OpenWrap(kek *[32]byte, index int, blob []byte) (*ta1.Keys, error) {
 	if len(blob) != SlotSize || index < 0 || index >= NumSlots {
 		return nil, ErrSlot
 	}
-	wk := kdf.Keys(kek)
+	wk, err := kdf.Keys(kek)
+	if err != nil {
+		return nil, err
+	}
 	defer wk.Zeroize()
 	plain, err := wk.Open(ta1.LabelSlot, slotAD(index), blob)
 	if err != nil {

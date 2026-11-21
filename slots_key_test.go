@@ -130,11 +130,11 @@ func TestRemoveFactorSetsWithTheKey(t *testing.T) {
 	if opens(t, f, pwUnlock()) {
 		t.Fatal("the password alone still opens it")
 	}
-	if !opens(t, f, Unlock{Password: []byte("correct horse"), FIDO: key}) || !opens(t, f, Unlock{Recovery: code}) {
+	if !opens(t, f, Unlock{Password: []byte("correct horse"), FIDO: key}) || !opens(t, f, Unlock{Recovery: []byte(code)}) {
 		t.Fatal("the key, or the recovery code, stopped working")
 	}
 	// Both key slots go at once by naming both pairs, keeping the recovery code.
-	c = reopen(t, f, Unlock{Recovery: code})
+	c = reopen(t, f, Unlock{Recovery: []byte(code)})
 	n, err = c.RemoveFactorSets([][]Factor{pwKey, rcKey}, [][]Factor{{rc}})
 	if err != nil || n != 2 {
 		t.Fatalf("removing both key slots = %d, %v", n, err)

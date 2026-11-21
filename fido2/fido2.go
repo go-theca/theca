@@ -78,7 +78,7 @@ type key interface {
 // Device is one authenticator, ready to enrol or derive.
 type Device struct {
 	k      key
-	pin    func() (string, error)
+	pin    func() ([]byte, error)
 	proto  authn.PINProtocol
 	uv     bool // built-in user verification is CONFIGURED (option "uv" true; false or absent: no)
 	canPIN bool // a PIN is set (option "clientPin" true) and a function can ask for it
@@ -107,7 +107,7 @@ var (
 // Open finds the attached key and checks that it can hold a Theca credential:
 // hmac-secret, credProtect, discoverable credentials, and a way to verify
 // the person (its own, or a PIN, which pin returns when asked).
-func Open(ctx context.Context, pin func() (string, error), opts ...Option) (*Device, error) {
+func Open(ctx context.Context, pin func() ([]byte, error), opts ...Option) (*Device, error) {
 	var c config
 	for _, o := range opts {
 		o(&c)
@@ -120,7 +120,7 @@ func Open(ctx context.Context, pin func() (string, error), opts ...Option) (*Dev
 	return d, nil
 }
 
-func open(ctx context.Context, pin func() (string, error), c *config) (*Device, error) {
+func open(ctx context.Context, pin func() ([]byte, error), c *config) (*Device, error) {
 	if goos == "windows" {
 		// Windows will not let an unelevated process open the key (1903+); it
 		// does the PIN and the dialog itself, so pin is not used. It also
@@ -148,7 +148,7 @@ func open(ctx context.Context, pin func() (string, error), c *config) (*Device, 
 	return d, nil
 }
 
-func newDevice(ctx context.Context, k key, pin func() (string, error)) (*Device, error) {
+func newDevice(ctx context.Context, k key, pin func() ([]byte, error)) (*Device, error) {
 	info, err := k.GetInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -267,7 +267,11 @@ func (d *Device) token(ctx context.Context, perm authn.Permissions) (authn.Token
 	if err != nil {
 		return authn.Token{}, err
 	}
-	tok, err := d.k.PINToken(ctx, pin, d.proto, perm, RPID)
+	defer clear(pin)
+	// go-authn/fido takes the PIN as a string, so one immutable copy is made
+	// here, at the library's edge, and nowhere else; everything above it is
+	// bytes that are wiped (go-authn/fido has no []byte PIN call yet).
+	tok, err := d.k.PINToken(ctx, string(pin), d.proto, perm, RPID)
 	if err != nil {
 		return authn.Token{}, fmt.Errorf("%w (%d tries were left before this one)", mapErr(err), r.PIN)
 	}

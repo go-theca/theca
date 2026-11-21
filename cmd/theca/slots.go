@@ -117,7 +117,7 @@ func openWithFactors(cmd *cobra.Command, path string, s *secrets) (*theca.Contai
 		}
 		p["pw"] = pw
 	}
-	if u.Recovery != "" {
+	if len(u.Recovery) > 0 {
 		rc, err := theca.RecoveryFactor(u.Recovery)
 		if err != nil {
 			p.wipe()

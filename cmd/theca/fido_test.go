@@ -17,7 +17,7 @@ import (
 // function it was opened with, as a key without a fingerprint does.
 type cliKey struct {
 	creds   [][]byte
-	pin     func() (string, error)
+	pin     func() ([]byte, error)
 	pins    []string
 	device  string // what --device asked for
 	closed  int
@@ -39,7 +39,8 @@ func (k *cliKey) out(cr []byte, salts [][32]byte) [][]byte {
 
 func (k *cliKey) askPIN() error {
 	p, err := k.pin()
-	k.pins = append(k.pins, p)
+	k.pins = append(k.pins, string(p))
+	clear(p) // the key layer wipes the PIN it was given
 	return err
 }
 
@@ -93,7 +94,7 @@ func withKey(t *testing.T, k *cliKey, err error) {
 	t.Helper()
 	saved := openFIDO
 	t.Cleanup(func() { openFIDO = saved })
-	openFIDO = func(_ context.Context, pin func() (string, error), device string) (fidoDevice, error) {
+	openFIDO = func(_ context.Context, pin func() ([]byte, error), device string) (fidoDevice, error) {
 		if err != nil {
 			return nil, err
 		}

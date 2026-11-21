@@ -77,7 +77,7 @@ func newContainer(t *testing.T) (dir, path, pwFile, code string) {
 		t.Fatalf("create: %v %s", r.e, r.err)
 	}
 	code = strings.TrimSpace(r.out)
-	if _, err := format.ParseRecoveryCode(code); err != nil {
+	if _, err := format.ParseRecoveryCode([]byte(code)); err != nil {
 		t.Fatalf("printed code %q: %v", code, err)
 	}
 	if !strings.Contains(r.err, "shown once") || !strings.Contains(r.err, "no rollback counter") {
