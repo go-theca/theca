@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/go-tpm2/tpm2"
@@ -340,7 +342,7 @@ func TestOperationErrors(t *testing.T) {
 func TestUnsupportedPlatform(t *testing.T) {
 	f := newFake()
 	use(t, f)
-	for _, os := range []string{"darwin", "windows"} {
+	for _, os := range []string{"darwin", "freebsd"} {
 		goos = os
 		if _, err := Create(Options{}); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%s: %v", os, err)
@@ -349,6 +351,66 @@ func TestUnsupportedPlatform(t *testing.T) {
 		if _, err := Create(Options{Device: "unix:/x"}); err != nil {
 			t.Fatalf("%s with a device: %v", os, err)
 		}
+	}
+}
+
+// Windows defaults to TBS, which Linux's default is not.
+func TestWindowsDefaultsToTBS(t *testing.T) {
+	f := newFake()
+	use(t, f)
+	goos = "windows"
+	if _, err := Create(Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.device != TBSDevice {
+		t.Fatalf("device %q, want %q", f.device, TBSDevice)
+	}
+}
+
+// fakeTransport is a TPM channel that counts its closes.
+type fakeTransport struct{ closed int }
+
+func (f *fakeTransport) Send([]byte) ([]byte, error) { return nil, boom }
+func (f *fakeTransport) Close() error                { f.closed++; return nil }
+
+// The real connect with the TBS device: the TBS context is opened through
+// openTBS, its error is returned, and its Close is the connection's.
+func TestConnectTBS(t *testing.T) {
+	old := openTBS
+	t.Cleanup(func() { openTBS = old })
+
+	openTBS = func() (transport, error) { return nil, boom }
+	if _, _, err := connect(TBSDevice); !errors.Is(err, boom) {
+		t.Fatalf("open error: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	openTBS = func() (transport, error) { return ft, nil }
+	tp, closeFn, err := connect(TBSDevice)
+	if err != nil || tp == nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if err := closeFn(); err != nil || ft.closed != 1 {
+		t.Fatalf("close: %v, closed %d", err, ft.closed)
+	}
+}
+
+// The real openTBS: off Windows devtpm refuses, and the counter says so; on
+// Windows it is a TBS error or a context (a machine without a TPM answers
+// TBS_E_TPM_NOT_FOUND).
+func TestRealOpenTBS(t *testing.T) {
+	tr, err := openTBS()
+	if err != nil {
+		if runtime.GOOS != "windows" && !strings.Contains(err.Error(), "only on Windows") {
+			t.Fatalf("off Windows: %v", err)
+		}
+		return
+	}
+	if runtime.GOOS != "windows" {
+		t.Fatal("a TBS context off Windows")
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -69,7 +69,7 @@ const tpmFromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretser
 
 func (f *tpmFlags) flags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.counter, "counter", "", "rollback counter: tpm (a TPM 2.0 NV counter) or empty for none; create makes one, the other commands must be given it again")
-	cmd.Flags().StringVar(&f.device, "tpm-device", "", "TPM device: a path, or unix:SOCKET for a software TPM (default /dev/tpmrm0 on Linux)")
+	cmd.Flags().StringVar(&f.device, "tpm-device", "", "TPM device: a path, or unix:SOCKET for a software TPM (default /dev/tpmrm0 on Linux, tbs: on Windows)")
 	cmd.Flags().Uint32Var(&f.handle, "tpm-handle", 0, "create: NV index of the new counter (0: the first free one from 0x01500000)")
 	cmd.Flags().StringVar(&f.authFile, "tpm-auth-file", "", "file holding the counter's authValue, at most 32 bytes (mode 0600 or stricter); DEPRECATED, see --tpm-auth-from. With neither flag, a NEW counter's authValue is derived from the container's master key (nothing to store); a counter made earlier with a stored authValue needs its flag at every mount")
 	cmd.Flags().StringVar(&f.authFrom, "tpm-auth-from", "", "the counter's authValue, at most 32 bytes,"+tpmFromHelp)

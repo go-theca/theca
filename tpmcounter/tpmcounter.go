@@ -2,11 +2,12 @@
 // a TPM_NT_COUNTER NV index, created once per container and incremented once
 // per mount session, over go-tpm2/tpm2.
 //
-// Transports: the Linux kernel resource manager (/dev/tpmrm0), and any raw
-// TPM 2.0 stream the caller names as "unix:<socket>" (a software TPM started
-// with swtpm --server type=unixio). Windows (TBS) is not supported: go-tpm2
-// has no TBS transport. macOS has no TPM. Both return ErrUnsupported unless a
-// device is named explicitly.
+// Transports: the Linux kernel resource manager (/dev/tpmrm0), Windows TPM
+// Base Services ("tbs:", the Windows default, go-tpm2/devtpm OpenTBS), and any
+// raw TPM 2.0 stream the caller names as "unix:<socket>" (a software TPM
+// started with swtpm --server type=unixio). macOS has no TPM and returns
+// ErrUnsupported unless a device is named explicitly; "tbs:" off Windows is an
+// error too.
 //
 // A Counter holds no open connection. Each operation opens the device and
 // closes it, so no lifetime has to be managed and the kernel resource manager
@@ -20,6 +21,7 @@ import (
 	"net"
 	"runtime"
 
+	"github.com/go-tpm2/common"
 	"github.com/go-tpm2/devtpm"
 	"github.com/go-tpm2/tpm2"
 )
@@ -51,6 +53,10 @@ const (
 
 // DefaultLinuxDevice is the kernel resource manager.
 const DefaultLinuxDevice = devtpm.DefaultDevice
+
+// TBSDevice names Windows TPM Base Services, the Windows default: one TBS
+// context per operation, as for the other devices.
+const TBSDevice = "tbs:"
 
 // IDSize is the size of an identity: a SHA-256 digest.
 const IDSize = 32
@@ -124,8 +130,26 @@ type nvTPM interface {
 // goos is replaced by tests.
 var goos = runtime.GOOS
 
+// openTBS opens a TBS context; tests replace it. Off Windows devtpm answers
+// ErrTBSUnsupported. The transport is only used when err is nil (a nil
+// *devtpm.TBS is returned with an error).
+var openTBS = func() (transport, error) { t, err := devtpm.OpenTBS(); return t, err }
+
+// transport is a TPM 2.0 command channel that can be closed.
+type transport interface {
+	common.Transport
+	Close() error
+}
+
 // connect opens the TPM; tests replace it. The function closes the connection.
 var connect = func(device string) (nvTPM, func() error, error) {
+	if device == TBSDevice {
+		t, err := openTBS()
+		if err != nil {
+			return nil, nil, err
+		}
+		return tpm2.New(t), t.Close, nil
+	}
 	if len(device) > 5 && device[:5] == "unix:" {
 		conn, err := net.Dial("unix", device[5:])
 		if err != nil {
@@ -145,8 +169,11 @@ func (o Options) device() (string, error) {
 	if o.Device != "" {
 		return o.Device, nil
 	}
-	if goos == "linux" {
+	switch goos {
+	case "linux":
 		return DefaultLinuxDevice, nil
+	case "windows":
+		return TBSDevice, nil
 	}
 	return "", ErrUnsupported
 }
