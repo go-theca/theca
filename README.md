@@ -319,8 +319,12 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tp
 - `--tpm-device`: a device path, or `unix:SOCKET` for a software TPM
   (`swtpm socket --tpm2 --server type=unixio,path=SOCKET ...`). The default is
   `/dev/tpmrm0` on Linux, which needs permission to open it (usually the
-  `tss` group). macOS has no TPM and Windows (TBS) is not supported yet
-  (go-tpm2 has no TBS transport): both say so unless a device is named.
+  `tss` group). On Windows the default is TPM Base Services (`tbs:`, through
+  go-tpm2/devtpm's `OpenTBS`); name `tbs:` explicitly on any platform to
+  select it (off Windows it says it is unsupported). **Windows is measured
+  only as far as `TBS_E_TPM_NOT_FOUND`** on a Windows 11 VM without a TPM; a
+  counter through a real TPM there has not been run. macOS has no TPM and
+  says so unless a device is named.
 - **The counter's authValue is derived from the container (v0.19.0).** With no
   `--tpm-auth-*` flag, a new counter's authValue is an HKDF of the container's
   master key: whoever unlocks the container (password plus security key) can
@@ -395,7 +399,7 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tp
   `NVReadCounter`, `EKIdentity`. Counters defined by v0.9.0 (without `NO_DA`) are
   still recognized. One counter per container.
 
-Not in this version: the TPM counter on Windows, slot management for FIDO2
+Not in this version: slot management for FIDO2
 factor sets on the command line (`slots` handles the
 password and the recovery code).
 

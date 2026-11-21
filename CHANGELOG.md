@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.26.0
+
+- The TPM counter works on Windows (go-theca/theca#37): `--tpm-device` defaults to `tbs:`
+  there, TPM Base Services through go-tpm2/devtpm v0.4.0 (`OpenTBS`, pure Go). Naming `tbs:`
+  elsewhere is refused as unsupported. Measured on a Windows 11 ARM64 VM without a TPM: the
+  real `tbs.dll` answers `TBS_E_TPM_NOT_FOUND`. A counter through a real Windows TPM has not
+  been run.
+
 ## v0.25.0
 
 ### Security
