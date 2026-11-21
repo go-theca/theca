@@ -47,7 +47,9 @@ and `status` talk to it over a per-user Unix socket (mode 0600, peer user ID
 checked). A second `open` of the same container is refused. With
 `--close-on-lock` (the default) the container is closed when the screen locks,
 the machine sleeps or the session ends: logind over D-Bus on Linux, the
-session's screen-lock flag and a clock-jump check on macOS. Windows has no
+screen-lock, will-sleep and session-resign notifications on macOS (delivered
+before the sleep, no polling; `theca open` says on standard error whether it
+listens or, if the notifications cannot be heard, polls every 2 s). Windows has no
 auto-close yet. `profile list` and `profile remove NAME` list and delete
 profiles (the container and the manager's entries stay).
 

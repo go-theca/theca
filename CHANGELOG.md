@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.22.0
+
+- macOS `close-on-lock` is event-driven (go-theca/theca#59): `com.apple.screenIsLocked`
+  (NSDistributedNotificationCenter), `NSWorkspaceWillSleepNotification` (the container is
+  closed BEFORE the sleep, not after the wake) and `NSWorkspaceSessionDidResignActiveNotification`,
+  through go-macos/objc v0.13.0 (`Observe`, `Post`, `RunMainLoop`). No polling lag.
+- These notifications are delivered on the main thread's run loop only (measured), so the
+  background process pins its main goroutine to the main thread and runs the loop there while
+  the container is served on other goroutines.
+- The observers are proven at start: the process posts a notification of its own name and
+  waits for it. If they cannot be registered, or nothing delivers them, it falls back to the
+  2 s poll of `CGSSessionScreenIsLocked` and the clock-jump check. `theca open` prints which
+  mode is active on standard error.
+
 ## v0.21.0
 
 - Deprecated: `--password-file`, `--recovery-file`, `--pin-file`, `--tpm-auth-file`,
