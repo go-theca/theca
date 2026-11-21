@@ -99,11 +99,13 @@ func FIDO2Salt(partner *[32]byte, kind string) [32]byte {
 // Keys expands a 32-byte KEK into the three Theca-A keys that seal a slot
 // (DESIGN 2): one HKDF-SHA-256 call of 96 bytes, so all three are always
 // derived together.
-func Keys(kek *[32]byte) *ta1.Keys {
+//
+// The error is memlock's, in Required mode only: the keys' pages could not be
+// pinned out of swap.
+func Keys(kek *[32]byte) (*ta1.Keys, error) {
 	b, _ := hkdf.Key(sha256.New, kek[:], nil, infoPrefix+"keys", ta1.MSSize)
-	k, _ := ta1.FromBytes(b)
-	clear(b)
-	return k
+	defer clear(b)
+	return ta1.FromBytes(b)
 }
 
 // CounterAuthSize is the size of a derived counter authValue: the digest size

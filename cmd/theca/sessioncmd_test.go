@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-theca/theca"
+	"github.com/go-theca/theca/internal/memlock"
 	"github.com/go-theca/theca/profile"
 	"github.com/go-theca/theca/session"
 	"github.com/go-theca/theca/share"
@@ -27,6 +28,8 @@ func init() {
 	switch mode {
 	case "ok":
 		session.Report(ready, session.Response{OK: true, Info: &session.Info{Name: os.Args[2], Mount: "/Volumes/THECA"}})
+	case "args": // the arguments after `_serve <name>`, as the mount
+		session.Report(ready, session.Response{OK: true, Info: &session.Info{Name: os.Args[2], Mount: strings.Join(os.Args[3:], " ")}})
 	case "err":
 		session.Report(ready, session.Response{Error: "wrong password"})
 	case "hang":
@@ -264,6 +267,15 @@ func TestCloseReportsFailure(t *testing.T) {
 }
 
 func TestDaemonEnds(t *testing.T) {
+	hardened := 0
+	saved := platformHarden
+	platformHarden = func() error { hardened++; return saved() }
+	defer func() {
+		platformHarden = saved
+		if hardened != 3 {
+			t.Errorf("the daemon hardened its process %d times, want once per daemon (3)", hardened)
+		}
+	}()
 	for _, how := range []string{"lock", "share", "signal"} {
 		e := newSessionEnv(t)
 		_, path, _ := exfatContainer(t)
@@ -490,6 +502,16 @@ func TestSpawnDaemon(t *testing.T) {
 	if err != nil || i.Mount != "/Volumes/THECA" || i.Name != "bio" {
 		t.Fatalf("%+v %v", i, err)
 	}
+	// The daemon is a new process: it runs in the mlock mode of this one.
+	t.Setenv("THECA_FAKE_DAEMON", "args")
+	for _, m := range []memlock.Mode{memlock.BestEffort, memlock.Required, memlock.Off} {
+		memlock.SetMode(m)
+		i, err := spawnDaemon(context.Background(), "bio", null)
+		if err != nil || i.Mount != "--mlock "+m.String() {
+			t.Fatalf("mode %v: %+v %v", m, i, err)
+		}
+	}
+	memlock.SetMode(memlock.BestEffort)
 	t.Setenv("THECA_FAKE_DAEMON", "err")
 	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil || err.Error() != "wrong password" {
 		t.Fatal(err)

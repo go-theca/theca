@@ -26,6 +26,7 @@ import (
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/fido2"
 	"github.com/go-theca/theca/internal/format"
+	"github.com/go-theca/theca/internal/memlock"
 )
 
 func enrollKeyCmd() *cobra.Command {
@@ -79,7 +80,7 @@ func enrollKeyCmd() *cobra.Command {
 				}
 				partners = append(partners, pw)
 			}
-			if u.Recovery != "" {
+			if len(u.Recovery) > 0 {
 				rc, err := theca.RecoveryFactor(u.Recovery)
 				if err != nil {
 					return err
@@ -279,15 +280,13 @@ func (s *secrets) pinFlag(cmd *cobra.Command) {
 
 // keyPIN returns the function the key asks for its PIN through, only when
 // it has no built-in verification.
-func (s *secrets) keyPIN(cmd *cobra.Command) func() (string, error) {
-	return func() (string, error) {
+func (s *secrets) keyPIN(cmd *cobra.Command) func() ([]byte, error) {
+	return func() ([]byte, error) {
 		b, ok, err := s.source(cmd, "pin", s.pinFile, s.pinFrom)
 		if !ok {
 			b, err = readTerminal(cmd, "Security key PIN: ")
 		}
-		pin := string(b)
-		clear(b)
-		return pin, err
+		return b, err // the key layer wipes it after use
 	}
 }
 
@@ -301,7 +300,7 @@ type fidoDevice interface {
 
 // openFIDO opens the security key the device ID names (or the one touched,
 // among several); tests replace it.
-var openFIDO = func(ctx context.Context, pin func() (string, error), device string) (fidoDevice, error) {
+var openFIDO = func(ctx context.Context, pin func() ([]byte, error), device string) (fidoDevice, error) {
 	return fido2.Open(ctx, pin, fido2.WithNotice(printNotice), fido2.WithDevice(device))
 }
 
@@ -323,6 +322,7 @@ func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 	var dev fidoDevice
 	wipe := func() {
 		clear(u.Password)
+		clear(u.Recovery)
 		if dev != nil {
 			dev.Close()
 		}
@@ -339,8 +339,7 @@ func (s *secrets) unlock(cmd *cobra.Command) (theca.Unlock, func(), error) {
 		if err != nil {
 			return u, wipe, err
 		}
-		u.Recovery = string(rc)
-		clear(rc)
+		u.Recovery = rc
 	}
 	if s.passwordGiven() || !s.recoveryGiven() {
 		pw, err := s.password(cmd, "Password: ")
@@ -433,6 +432,20 @@ func RootCmd() *cobra.Command {
 		Long:          "Create and use Theca encrypted containers (docs/DESIGN.md).\n\nSecrets are read from the terminal with echo off, or from owner-only files.\nThey are never accepted as arguments or environment variables.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+	}
+	var mlockMode string
+	root.PersistentFlags().StringVar(&mlockMode, "mlock", "auto", "keep the pages that hold keys out of swap: auto (try, say once if refused), off, or required (refuse to run if the system refuses)")
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		m, err := memlock.ParseMode(mlockMode)
+		if err != nil {
+			return err
+		}
+		memlock.SetMode(m)
+		w := cmd.ErrOrStderr()
+		memlock.SetReporter(func(err error) {
+			fmt.Fprintf(w, "warning: %v: the keys may be written to swap (raise RLIMIT_MEMLOCK, or use --mlock=required to refuse to run)\n", err)
+		})
+		return nil
 	}
 	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd(), serveCmd(), slotsCmd(), counterCmd(),
 		profileCmd(), openCmd(), closeCmd(), statusCmd(), serveProfileCmd())

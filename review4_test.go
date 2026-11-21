@@ -133,7 +133,7 @@ func TestEnrollChecksFirstAndCommitsOnce(t *testing.T) {
 	salt := make([]byte, format.SaltSize)
 	f.ReadAt(salt, 0)
 	pw, _ := PasswordFactor(0, []byte("correct horse"), salt)
-	rc, _ := RecoveryFactor(code)
+	rc, _ := RecoveryFactor([]byte(code))
 
 	key := newKey()
 	e := c.Info().Epoch

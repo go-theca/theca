@@ -1,12 +1,29 @@
 # Changelog
 
-## v0.25.0
+## v0.26.0
 
 - The TPM counter works on Windows (go-theca/theca#37): `--tpm-device` defaults to `tbs:`
   there, TPM Base Services through go-tpm2/devtpm v0.4.0 (`OpenTBS`, pure Go). Naming `tbs:`
   elsewhere is refused as unsupported. Measured on a Windows 11 ARM64 VM without a TPM: the
   real `tbs.dll` answers `TBS_E_TPM_NOT_FOUND`. A counter through a real Windows TPM has not
   been run.
+
+## v0.25.0
+
+### Security
+
+- Key memory hardening (go-theca/theca#68).
+  - The PIN and the recovery code are `[]byte` end to end and cleared after use, like the
+    password. BREAKING for library callers: `Unlock.Recovery` is `[]byte`,
+    `RecoveryFactor` and `format.ParseRecoveryCode` take `[]byte`, and the `fido2` PIN
+    callbacks return `[]byte` (the callee wipes it). One `string` copy remains at the
+    go-authn/fido `PINToken` call.
+  - The pages holding the master secret, the slot wrap keys and their caches are `mlock`ed
+    (new `internal/memlock`, per-page counts). `--mlock=auto` (default) reports a refusal
+    once; `--mlock=required` makes it an error; `--mlock=off` disables it. The daemon gets
+    the mode of the `open` that started it.
+  - `theca _serve` sets `RLIMIT_CORE` to 0 and `PR_SET_DUMPABLE` to 0 (Linux), or
+    `RLIMIT_CORE` to 0 and `PT_DENY_ATTACH` (macOS). A refusal is a warning.
 
 ## v0.24.0
 

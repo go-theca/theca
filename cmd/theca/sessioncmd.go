@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/internal/lockwatch"
+	"github.com/go-theca/theca/internal/memlock"
 	"github.com/go-theca/theca/profile"
 	"github.com/go-theca/theca/session"
 	"github.com/go-theca/theca/share"
@@ -280,7 +281,8 @@ func spawnDaemon(ctx context.Context, name string, stderr *os.File) (session.Inf
 	if err != nil {
 		return session.Info{}, err
 	}
-	return session.StartAttached(ctx, exe, name, os.Stdin, stderr)
+	// The daemon is a new process: it gets the mode this one runs in.
+	return session.StartAttached(ctx, exe, name, os.Stdin, stderr, "--mlock", memlock.Current().String())
 }
 
 // secretsOf turns a profile into the flags `theca serve` would have been given.
@@ -336,6 +338,7 @@ func serveProfileCmd() *cobra.Command {
 			if ready == nil {
 				return errors.New("_serve is started by `theca open`")
 			}
+			hardenProcess(cmd.ErrOrStderr()) // before a key exists
 			defer ready.Close()
 			err := onMainThread(func() error { return runDaemon(cmd, args[0], ready) })
 			if err != nil {

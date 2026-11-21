@@ -9,6 +9,7 @@ import (
 	"github.com/go-theca/theca/internal/format"
 	"github.com/go-theca/theca/internal/journal"
 	"github.com/go-theca/theca/internal/kdf"
+	"github.com/go-theca/theca/internal/memlock"
 	"github.com/go-theca/theca/internal/merkle"
 	"github.com/go-theca/theca/internal/ta1"
 )
@@ -47,7 +48,7 @@ func collectFactors(ctx context.Context, u *Unlock, salt []byte) (cands [][32]by
 		}
 		fs = append(fs, pw)
 	}
-	if u.Recovery != "" {
+	if len(u.Recovery) > 0 {
 		rc, err := RecoveryFactor(u.Recovery)
 		if err != nil {
 			return nil, err
@@ -148,6 +149,14 @@ func Open(ctx context.Context, f Backing, u Unlock, o OpenOptions) (*Container, 
 		return nil, err
 	}
 	ms := unlockSlots(cands, table)
+	// unlockSlots reads a refusal to pin a key's pages as "this slot does not
+	// open"; under --mlock=required that is the answer, not ErrNoMatch.
+	if err := memlock.Failed(); err != nil {
+		if ms != nil {
+			ms.Zeroize()
+		}
+		return nil, err
+	}
 	if ms == nil {
 		return nil, ErrNoMatch
 	}

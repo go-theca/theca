@@ -24,24 +24,26 @@ var osPipe = os.Pipe
 // until Start returns. A nil notice drops them. ctx bounds the wait: when it
 // ends, the process is killed. On success the process keeps running, detached,
 // and Info says where the container is mounted.
-func Start(ctx context.Context, exe, name string, notice func(string)) (Info, error) {
-	return startProcess(ctx, exe, name, nil, nil, true, notice)
+//
+// extra are further command-line arguments for the child, after the name.
+func Start(ctx context.Context, exe, name string, notice func(string), extra ...string) (Info, error) {
+	return startProcess(ctx, exe, name, nil, nil, true, notice, extra)
 }
 
 // StartAttached is Start for a terminal: the process inherits in and out as its
 // standard input, output and error until the container is open, so that a
 // notice and a PIN prompt reach the person.
-func StartAttached(ctx context.Context, exe, name string, in, out *os.File) (Info, error) {
-	return startProcess(ctx, exe, name, in, out, false, nil)
+func StartAttached(ctx context.Context, exe, name string, in, out *os.File, extra ...string) (Info, error) {
+	return startProcess(ctx, exe, name, in, out, false, nil, extra)
 }
 
-func startProcess(ctx context.Context, exe, name string, in, out *os.File, capture bool, notice func(string)) (Info, error) {
+func startProcess(ctx context.Context, exe, name string, in, out *os.File, capture bool, notice func(string), extra []string) (Info, error) {
 	r, w, err := osPipe()
 	if err != nil {
 		return Info{}, err
 	}
 	defer r.Close()
-	child := exec.Command(exe, "_serve", name)
+	child := exec.Command(exe, append([]string{"_serve", name}, extra...)...)
 	if in != nil {
 		child.Stdin = in
 	}

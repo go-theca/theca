@@ -172,8 +172,9 @@ func PasswordFactor(hint int, password, salt []byte) (Factor, error) {
 	return Factor{Kind: "pw", KEK: kdf.KEK(out, "pw")}, nil
 }
 
-// RecoveryFactor parses a printed recovery code.
-func RecoveryFactor(code string) (Factor, error) {
+// RecoveryFactor parses a printed recovery code. The bytes are the caller's to
+// wipe.
+func RecoveryFactor(code []byte) (Factor, error) {
 	raw, err := format.ParseRecoveryCode(code)
 	if err != nil {
 		return Factor{}, err
@@ -294,7 +295,7 @@ func (c *Container) newCaches(root [32]byte) {
 type Unlock struct {
 	Hint     int
 	Password []byte
-	Recovery string
+	Recovery []byte // the printed code; the caller wipes it after use
 	FIDO     FIDO2
 }
 

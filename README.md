@@ -403,6 +403,30 @@ Not in this version: slot management for FIDO2
 factor sets on the command line (`slots` handles the
 password and the recovery code).
 
+### Keys in memory (go-theca/theca#68)
+
+While a container is open its keys are in RAM, and for hours in the `open`
+daemon. What `theca` does about it, and what it does not:
+
+- **Wiped after use.** The password, the PIN and the recovery code are `[]byte`
+  from the moment they are read (terminal, owner-only file, secret manager) and
+  are cleared once used. One immutable copy is made where a library takes a
+  `string`: the PIN, at the FIDO2 library's `PINToken` call (go-authn/fido has
+  no `[]byte` form yet). `create` still holds the recovery code it prints as a
+  `string`.
+- **Not swapped.** The pages that hold the master secret, the slot wrap keys and
+  their cipher caches are `mlock`ed (a per-page count, because `munlock` of a
+  page undoes every `mlock` of it). `--mlock=auto` (the default) tries and says
+  once on stderr if the system refuses (`RLIMIT_MEMLOCK`); `--mlock=required`
+  refuses to open instead; `--mlock=off` does not call `mlock`. The AES round
+  keys inside go-encryptions/ctr, the transient key-encryption keys on the
+  stack and `crypto/hmac`'s internal pads are **not** pinned.
+- **No core file, no debugger.** `theca _serve`, the daemon, sets
+  `RLIMIT_CORE` to 0 and, on Linux, `PR_SET_DUMPABLE` to 0 (no core file whatever
+  the limit; `ptrace`, `/proc/PID/mem` and `process_vm_readv` refused to a
+  process of the same user), on macOS `PT_DENY_ATTACH` (a later attach fails).
+  A refusal is a warning, not a stop. Windows and the other systems: nothing.
+
 ## Library
 
 ```go

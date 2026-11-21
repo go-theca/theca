@@ -185,7 +185,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal("double close")
 	}
 
-	for _, u := range []Unlock{pwUnlock(), {Recovery: code}} {
+	for _, u := range []Unlock{pwUnlock(), {Recovery: []byte(code)}} {
 		c2 := reopen(t, f, u)
 		m.check(t, c2)
 		if n, err := c2.Verify(); err != nil || n != testSectors {
@@ -234,7 +234,7 @@ func TestWrongFactors(t *testing.T) {
 	_ = code
 	bad := []Unlock{
 		{}, {Password: []byte("wrong")}, {Password: []byte("correct horse "), Hint: 0},
-		{Recovery: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-A"[:0]},
+		{Recovery: []byte("AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-A")[:0]},
 	}
 	for _, u := range bad {
 		if _, err := Open(ctx, f, u, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
@@ -248,13 +248,13 @@ func TestWrongFactors(t *testing.T) {
 	if _, err := Open(ctx, f, Unlock{Password: []byte("x"), Hint: 9}, OpenOptions{}); !errors.Is(err, kdf.ErrProfile) {
 		t.Errorf("hint outside the table: %v", err)
 	}
-	if _, err := Open(ctx, f, Unlock{Recovery: "not a code"}, OpenOptions{}); !errors.Is(err, format.ErrRecoveryCode) {
+	if _, err := Open(ctx, f, Unlock{Recovery: []byte("not a code")}, OpenOptions{}); !errors.Is(err, format.ErrRecoveryCode) {
 		t.Errorf("malformed code: %v", err)
 	}
 	// A valid code of another container.
 	_, other, code2 := create(t, PolicyAny)
 	_ = other
-	if _, err := Open(ctx, f, Unlock{Recovery: code2}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
+	if _, err := Open(ctx, f, Unlock{Recovery: []byte(code2)}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
 		t.Errorf("foreign recovery code: %v", err)
 	}
 	// Not a container at all, and files too short to be one.
@@ -327,7 +327,7 @@ func TestTwoOfThreeWithFIDO2(t *testing.T) {
 	salt := make([]byte, format.SaltSize)
 	f.ReadAt(salt, 0)
 	pw, _ := PasswordFactor(0, []byte("correct horse"), salt)
-	rc, _ := RecoveryFactor(code)
+	rc, _ := RecoveryFactor([]byte(code))
 	key := newKey()
 	if err := c.EnrollFIDO2(ctx, key, pw, rc); err != nil {
 		t.Fatal(err)
@@ -349,10 +349,10 @@ func TestTwoOfThreeWithFIDO2(t *testing.T) {
 		return err
 	}
 	for name, u := range map[string]Unlock{
-		"password+recovery": {Password: []byte("correct horse"), Recovery: code},
+		"password+recovery": {Password: []byte("correct horse"), Recovery: []byte(code)},
 		"password+key":      {Password: []byte("correct horse"), FIDO: key},
-		"recovery+key":      {Recovery: code, FIDO: key},
-		"all three":         {Password: []byte("correct horse"), Recovery: code, FIDO: key},
+		"recovery+key":      {Recovery: []byte(code), FIDO: key},
+		"all three":         {Password: []byte("correct horse"), Recovery: []byte(code), FIDO: key},
 	} {
 		if err := open(u); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -361,7 +361,7 @@ func TestTwoOfThreeWithFIDO2(t *testing.T) {
 	// One factor alone never opens it, whichever it is.
 	for name, u := range map[string]Unlock{
 		"password": {Password: []byte("correct horse")},
-		"recovery": {Recovery: code},
+		"recovery": {Recovery: []byte(code)},
 		"key":      {FIDO: key},
 	} {
 		if err := open(u); !errors.Is(err, ErrNoMatch) {
@@ -384,7 +384,7 @@ func TestTwoOfThreeWithFIDO2(t *testing.T) {
 	// One question per unlock, whatever the number of partners: the
 	// password+recovery+key unlock asked once, with two salts.
 	before := key.derives
-	if err := open(Unlock{Password: []byte("correct horse"), Recovery: code, FIDO: key}); err != nil {
+	if err := open(Unlock{Password: []byte("correct horse"), Recovery: []byte(code), FIDO: key}); err != nil {
 		t.Fatal(err)
 	}
 	if key.derives != before+1 || len(key.salts) != 2 {
@@ -480,7 +480,7 @@ func TestTwoKeysAndManyCredentials(t *testing.T) {
 	salt := make([]byte, format.SaltSize)
 	f.ReadAt(salt, 0)
 	pw, _ := PasswordFactor(0, []byte("correct horse"), salt)
-	rc, _ := RecoveryFactor(code)
+	rc, _ := RecoveryFactor([]byte(code))
 	k1, k2 := newKey(), newKey()
 	k1.creds = [][]byte{rnd(32), rnd(32)} // credentials of other containers
 	if err := c.EnrollFIDO2(ctx, k1, pw, rc); err != nil {
@@ -493,7 +493,7 @@ func TestTwoKeysAndManyCredentials(t *testing.T) {
 	c.Close()
 	for name, u := range map[string]Unlock{
 		"k1 + password": {Password: []byte("correct horse"), FIDO: k1},
-		"k1 + recovery": {Recovery: code, FIDO: k1},
+		"k1 + recovery": {Recovery: []byte(code), FIDO: k1},
 		"k2 + password": {Password: []byte("correct horse"), FIDO: k2},
 	} {
 		r, err := Open(ctx, f, u, OpenOptions{})
@@ -504,7 +504,7 @@ func TestTwoKeysAndManyCredentials(t *testing.T) {
 		r.Close()
 	}
 	// k2 was enrolled with the password only.
-	if _, err := Open(ctx, f, Unlock{Recovery: code, FIDO: k2}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
+	if _, err := Open(ctx, f, Unlock{Recovery: []byte(code), FIDO: k2}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
 		t.Errorf("k2 + recovery: %v", err)
 	}
 }
@@ -594,7 +594,7 @@ func TestSlotManagement(t *testing.T) {
 	var rcSlot int = -1
 	salt := make([]byte, format.SaltSize)
 	f.ReadAt(salt, 0)
-	rc, _ := RecoveryFactor(code)
+	rc, _ := RecoveryFactor([]byte(code))
 	for i := 0; i < format.NumSlots; i++ {
 		b := make([]byte, format.SlotSize)
 		f.ReadAt(b, int64(format.SlotsOff+i*format.SlotSize))
@@ -620,12 +620,12 @@ func TestSlotManagement(t *testing.T) {
 		}
 	}
 	c.Close()
-	if _, err := Open(ctx, f, Unlock{Recovery: code}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
+	if _, err := Open(ctx, f, Unlock{Recovery: []byte(code)}, OpenOptions{}); !errors.Is(err, ErrNoMatch) {
 		t.Fatalf("removed recovery slot still opens: %v", err)
 	}
 	reopen(t, f, pwUnlock()).Close()
 	// Documented limit (DESIGN 2, R7): the OLD copy still opens with it.
-	reopen(t, old, Unlock{Recovery: code}).Close()
+	reopen(t, old, Unlock{Recovery: []byte(code)}).Close()
 
 	// Fill every slot; the 17th is refused.
 	c = reopen(t, f, pwUnlock())
@@ -878,7 +878,10 @@ func TestTamperDetected(t *testing.T) {
 	for i := 0; i < format.NumSlots; i++ {
 		img := flip(uint64(format.SlotsOff + i*format.SlotSize + 100))
 		okPW := func() bool { _, err := Open(ctx, img, pwUnlock(), OpenOptions{}); return err == nil }()
-		okRC := func() bool { _, err := Open(ctx, img, Unlock{Recovery: code}, OpenOptions{}); return err == nil }()
+		okRC := func() bool {
+			_, err := Open(ctx, img, Unlock{Recovery: []byte(code)}, OpenOptions{})
+			return err == nil
+		}()
 		if !okPW || !okRC {
 			broken++
 			if !okPW && !okRC {
