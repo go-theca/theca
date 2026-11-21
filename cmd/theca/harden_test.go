@@ -14,6 +14,24 @@ import (
 // drop its core limit: they run hardenProcess with the platform call replaced.
 func init() { platformHarden = func() error { return nil } }
 
+// The recovery code is carried as bytes and wiped with the password.
+func TestUnlockWipesThePasswordAndTheRecoveryCode(t *testing.T) {
+	dir, _, _, code := newContainer(t)
+	rc := secretFile(t, dir, "rc", code+"\n", 0o600)
+	pw := secretFile(t, dir, "pw2", "correct horse\n", 0o600)
+	cmd := RootCmd()
+	s := &secrets{passwordFile: pw, recoveryFile: rc}
+	u, wipe, err := s.unlock(cmd)
+	if err != nil || len(u.Recovery) == 0 || len(u.Password) == 0 {
+		t.Fatalf("unlock: %v %q %q", err, u.Recovery, u.Password)
+	}
+	rec, pass := u.Recovery, u.Password
+	wipe()
+	if !bytes.Equal(rec, make([]byte, len(rec))) || !bytes.Equal(pass, make([]byte, len(pass))) {
+		t.Fatalf("not wiped: %q %q", rec, pass)
+	}
+}
+
 func TestMlockFlag(t *testing.T) {
 	_, path, pw, _ := newContainer(t)
 	restore := memlock.SetSyscalls(func(unsafe.Pointer, uintptr) error { return errors.New("cannot allocate memory") },

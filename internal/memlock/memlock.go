@@ -133,14 +133,12 @@ func SetReporter(f func(error)) {
 	mu.Unlock()
 }
 
-// Failed is the first refusal of this process in Required mode, nil otherwise.
-// Callers that cannot return an error at the point of locking check it after.
+// Failed is the first refusal of this process in Required mode, nil otherwise
+// (only Required mode records one, and SetMode forgets it). Callers that cannot
+// return an error at the point of locking check it after.
 func Failed() error {
 	mu.Lock()
 	defer mu.Unlock()
-	if mode != Required {
-		return nil
-	}
 	return failed
 }
 
@@ -178,8 +176,8 @@ func (r *Region) Release() {
 		return
 	}
 	mu.Lock()
+	defer mu.Unlock()
 	r.release()
-	mu.Unlock()
 }
 
 // Lock pins the pages holding [p, p+n), p being inside a live object. In

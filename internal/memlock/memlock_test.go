@@ -126,6 +126,11 @@ func TestOffAndEmptyDoNothing(t *testing.T) {
 		t.Fatalf("empty: %v %v %d", r, err, f.locks)
 	}
 	var nilRegion *Region
+	defer func() {
+		if p := recover(); p != nil {
+			t.Errorf("Release on a nil Region panicked: %v", p)
+		}
+	}()
 	nilRegion.Release()
 }
 

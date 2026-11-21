@@ -52,6 +52,23 @@ func TestPinReleasesTheKeysWhenTheCacheIsRefused(t *testing.T) {
 	}
 }
 
+// A refusal of the keys' own region is an error even when the cache's is not.
+func TestPinFailsWhenOnlyTheKeysAreRefused(t *testing.T) {
+	s := new(struct {
+		k   Keys
+		pad [1 << 17]byte
+		c   cache
+	})
+	s.k.c = &s.c
+	refuse(t, 1)
+	if err := s.k.pin(); err == nil {
+		t.Fatal("pin ignored the refusal of the keys")
+	}
+	if s.k.mem[1] != nil {
+		t.Fatal("the cache was locked after the keys were refused")
+	}
+}
+
 func TestZeroizeReleasesTheRegions(t *testing.T) {
 	memlock.SetMode(memlock.BestEffort)
 	k, err := FromBytes(make([]byte, MSSize))
