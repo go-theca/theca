@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.29.0
+
+- `--password-from`, `--recovery-from` and `--pin-from` accept `systemd-creds:NAME` (Linux), through
+  go-authn/secretsource v0.8.0: a credential delivered in `$CREDENTIALS_DIRECTORY` by
+  `LoadCredentialEncrypted=` / `LoadCredential=`, or decrypted from a `credstore.encrypted`
+  directory. The bytes are taken exactly (seal with `printf %s`: a trailing newline would be part of
+  the password). Measured on systemd 257 (Debian 13) with `--with-key=host`; not measured with a
+  TPM2 key.
+- README: a sample `theca serve` unit, and the PCR-binding trade-off (a bare `--tpm2-pcrs=7` can lock
+  the vault after a firmware update; `host+tpm2`, a signed PCR policy, `systemd-pcrlock`,
+  re-sealing).
+- Test: every `-from` flag through the real secretsource with `systemd-creds:` (Linux).
+
 ## v0.28.0
 
 ### Windows sessions (go-theca/theca#58)

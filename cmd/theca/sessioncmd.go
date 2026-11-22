@@ -41,7 +41,7 @@ var (
 	absPath    = filepath.Abs
 )
 
-const refHelp = "keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or keepassxc:URL (checked, never read; file: is refused)"
+const refHelp = "keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT, keepassxc:URL or systemd-creds:NAME (checked, never read; file: is refused)"
 
 // maxOpenWait bounds how long `theca open` waits for the unlock (a person has to
 // touch a key, and may need a minute).

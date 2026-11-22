@@ -195,7 +195,7 @@ type secrets struct {
 }
 
 // fromHelp is the common tail of the --X-from help texts.
-const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT or keepassxc:URL (the entry's URL field); file:PATH still works but is deprecated"
+const fromHelp = " from a secret manager: keychain:SERVICE/ACCOUNT, secretservice:SERVICE/ACCOUNT, keepassxc:URL (the entry's URL field) or, on Linux, systemd-creds:NAME (a systemd credential); file:PATH still works but is deprecated"
 
 // deprecateFile hides a secret file flag from the help and warns on standard
 // error, naming the replacement, whenever it is used. (cobra's own
