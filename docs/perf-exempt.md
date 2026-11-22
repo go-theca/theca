@@ -7,6 +7,7 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `Container.Verify`: one `Sector/Open` per written sector plus the tree walk. Its per-sector cost is the `Sector/Open` row.
 - `Container.Sync`: the journal commit, i.e. sealed records, four flushes and a header seal. It is bounded by the backing's flush latency, not by computation, and there is no C counterpart.
 - `DefaultJournal`: one clamp of an integer, once per `Create`.
+- `Resize`: a one-off offline copy, run by hand: two opens (Argon2id, measured elsewhere), then a few sequential passes (hash through the source, raw copy, verify and hash through the copy); its per-sector cost is the `Sector/Open` row and the copy is bounded by the backing's sequential read and write.
 - `Container.Close`: `Sync`, then the keys are wiped.
 - `Container.AddSlot`: one slot seal (2 KiB, TA1) and a commit. Rare and interactive.
 - `Container.RemoveSlot`: one 2 KiB random write and a commit. Rare and interactive.

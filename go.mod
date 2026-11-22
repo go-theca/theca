@@ -12,7 +12,7 @@ require (
 	github.com/go-encryptions/ctr v0.1.1
 	github.com/go-fileshare/automount v0.1.1
 	github.com/go-filesystems/exfat v0.7.0
-	github.com/go-filesystems/smb v0.16.1
+	github.com/go-filesystems/smb v0.17.1
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/go-macos/objc v0.13.0
@@ -33,7 +33,7 @@ require (
 	github.com/cloudsoda/sddl v0.0.0-20261105185302-1c8f96799263 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/go-filesystems/hostcopy v0.1.0 // indirect
-	github.com/go-filesystems/inflight v0.2.0 // indirect
+	github.com/go-filesystems/inflight v0.6.0 // indirect
 	github.com/go-filesystems/interface v0.6.0 // indirect
 	github.com/go-fleettools/fleettools v0.81.0 // indirect
 	github.com/go-freedesktop/gvfs v0.1.1 // indirect
