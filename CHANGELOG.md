@@ -2,6 +2,20 @@
 
 ## v0.28.0
 
+### Windows sessions (go-theca/theca#58)
+
+- `theca open`, `close` and `status` now work on Windows: a user-only named pipe whose client SID
+  is checked, detach after the unlock, `LockFileEx` on the container, and a message-only window
+  that closes the session on lock, logoff and suspend. The daemon leaves the OpenSSH job
+  (`CREATE_BREAKAWAY_FROM_JOB` when the job allows it) so it survives the logout, and the profile
+  file is checked by its DACL instead of a POSIX mode. README and DESIGN I26 say what was and was
+  not measured.
+
+### Tests (go-theca/theca#76)
+
+- Test-only: the mutsweep survivors and hangs in `theca.go` are killed (delete mode: 14 survivors
+  and 2 hangs before, 0 and 0 after) and a runaway mutant is caught in seconds by a 10 s deadline.
+
 ### Security
 
 - Fewer secret copies (go-theca/theca#74). BREAKING for library callers: `theca.Create` and
