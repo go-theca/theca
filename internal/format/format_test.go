@@ -318,10 +318,11 @@ func TestSlotRandomFailures(t *testing.T) {
 }
 
 func TestRecoveryCode(t *testing.T) {
-	raw, printed, err := NewRecoveryCode(rand.Reader)
+	raw, pb, err := NewRecoveryCode(rand.Reader)
 	if err != nil || len(raw) != 20 {
 		t.Fatal(err)
 	}
+	printed := string(pb)
 	if len(printed) != 33+8 || strings.Count(printed, "-") != 8 {
 		t.Fatalf("printed form %q", printed)
 	}
@@ -417,15 +418,15 @@ func TestRecoveryCodeMatchesReference(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := ParseRecoveryCode([]byte(printed))
+		got, err := ParseRecoveryCode(printed)
 		if err != nil || !bytes.Equal(got, raw) {
 			t.Fatalf("%q: %v", printed, err)
 		}
 	}
 	// Every byte value in every position: accepted exactly when the
 	// reference accepts, with the same bytes.
-	_, printed, _ := NewRecoveryCode(rand.Reader)
-	plain := strings.ReplaceAll(printed, "-", "")
+	_, pb, _ := NewRecoveryCode(rand.Reader)
+	plain := strings.ReplaceAll(string(pb), "-", "")
 	for i := 0; i < 33; i++ {
 		for c := 0; c < 256; c++ {
 			s := plain[:i] + string([]byte{byte(c)}) + plain[i+1:]
@@ -439,7 +440,8 @@ func TestRecoveryCodeMatchesReference(t *testing.T) {
 }
 
 func FuzzParseRecoveryCode(f *testing.F) {
-	_, printed, _ := NewRecoveryCode(bytes.NewReader(make([]byte, 20)))
+	_, pb, _ := NewRecoveryCode(bytes.NewReader(make([]byte, 20)))
+	printed := string(pb)
 	f.Add(printed)
 	f.Add(strings.ToLower(printed))
 	f.Add("")

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.28.0
+
+### Security
+
+- Fewer secret copies (go-theca/theca#74). BREAKING for library callers: `theca.Create` and
+  `format.NewRecoveryCode` return the printed recovery code as `[]byte` (the caller wipes it),
+  not `string`; `create` writes it to the terminal from the bytes and clears it.
+- The PIN reaches the key through go-authn/fido v0.15.0 `PINTokenBytes`: no immutable `string`
+  of the PIN is made any more (the one copy v0.25.0 documented is gone).
+- go-authn/secretsource v0.7.0: on Windows a `file:` secret is now checked against its DACL
+  (see that release's notes for the exact rule).
+- Documented, not fixed: the AES round keys in go-encryptions/ctr (needs a `Wipe`/`Close` on the
+  cipher, asked in #74), stack copies of by-value KEKs, and `crypto/hmac`'s internal pads. A local
+  wiping HMAC was not adopted: it was not measured against the standard library (load ~29).
+
 ## v0.27.0
 
 - `theca journal resize FILE --out NEW` (go-theca/theca#73): a container made before v0.26.1 has a

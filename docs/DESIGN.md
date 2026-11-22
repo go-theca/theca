@@ -953,9 +953,15 @@ from one version, suite or purpose is never valid in another.
   after use; the pages of the master secret and the wrap keys are `mlock`ed
   (best effort, `--mlock=required` to refuse); the session daemon sets
   `RLIMIT_CORE` 0 and `PR_SET_DUMPABLE` 0 (Linux) or `PT_DENY_ATTACH` (macOS).
-  Not covered: the AES round keys in go-encryptions/ctr, transient KEKs on the
-  stack, `crypto/hmac` pads, and the one `string` copy of the PIN at the
-  go-authn/fido call.
+  Since v0.28.0 (#74): no `string` copy of the PIN (go-authn/fido v0.15.0
+  `PINTokenBytes`) or of the recovery code (`Create` returns it as `[]byte`,
+  `create` prints and wipes it). Not covered, and known: the AES round keys in
+  go-encryptions/ctr (its cipher has no `Wipe`/`Close`; asked in #74), the
+  by-value `[32]byte` KEKs returned by `kdf.KEK`/`kdf.Pair` (their stack copies
+  are not addressable from Go; every heap slice and struct field that holds one
+  is cleared), and the pads `crypto/hmac` keeps in its hash states (a local
+  HMAC-SHA-256 with a wipe was not adopted: it would have to match the
+  standard library's speed, which was not measured at load average ~29).
 - **Failure modes**: wrong password and corrupted container produce the
   same error up to the slot stage (no oracle). After unlock, a tag failure is
   an I/O error naming the sector, never silently zero data.

@@ -66,7 +66,7 @@ func WithDevice(id string) Option { return func(c *config) { c.device = id } }
 type key interface {
 	GetInfo(context.Context) (authn.Info, error)
 	PINRetries(context.Context) (authn.Retries, error)
-	PINToken(context.Context, string, authn.PINProtocol, authn.Permissions, string) (authn.Token, error)
+	PINTokenBytes(context.Context, []byte, authn.PINProtocol, authn.Permissions, string) (authn.Token, error)
 	UVToken(context.Context, authn.PINProtocol, authn.Permissions, string) (authn.Token, error)
 	UVRetries(context.Context) (int, error)
 	MakeCredential(context.Context, authn.MakeCredentialRequest) (*authn.Attestation, error)
@@ -268,10 +268,9 @@ func (d *Device) token(ctx context.Context, perm authn.Permissions) (authn.Token
 		return authn.Token{}, err
 	}
 	defer clear(pin)
-	// go-authn/fido takes the PIN as a string, so one immutable copy is made
-	// here, at the library's edge, and nowhere else; everything above it is
-	// bytes that are wiped (go-authn/fido has no []byte PIN call yet).
-	tok, err := d.k.PINToken(ctx, string(pin), d.proto, perm, RPID)
+	// go-authn/fido >= v0.15.0 takes the PIN as []byte and wipes its own
+	// working copies, so no immutable string of the PIN exists anywhere.
+	tok, err := d.k.PINTokenBytes(ctx, pin, d.proto, perm, RPID)
 	if err != nil {
 		return authn.Token{}, fmt.Errorf("%w (%d tries were left before this one)", mapErr(err), r.PIN)
 	}

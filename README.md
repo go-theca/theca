@@ -435,17 +435,24 @@ daemon. What `theca` does about it, and what it does not:
 
 - **Wiped after use.** The password, the PIN and the recovery code are `[]byte`
   from the moment they are read (terminal, owner-only file, secret manager) and
-  are cleared once used. One immutable copy is made where a library takes a
-  `string`: the PIN, at the FIDO2 library's `PINToken` call (go-authn/fido has
-  no `[]byte` form yet). `create` still holds the recovery code it prints as a
-  `string`.
+  are cleared once used, and no `string` copy of any of them is made: the PIN
+  goes to the FIDO2 library through its `[]byte` call (go-authn/fido v0.15.0,
+  `PINTokenBytes`), and `create` prints the recovery code it just made from a
+  `[]byte` it then wipes (`theca.Create` returns it as `[]byte`).
+- **Known remaining copies, not wiped.** The AES round keys inside
+  go-encryptions/ctr (its cipher has no `Wipe`/`Close` yet: go-theca/theca#74).
+  The transient key-encryption keys: where they live in a heap slice or in a
+  field of a value we own they are cleared, but a `[32]byte` returned by value
+  (`kdf.KEK`, `kdf.Pair`) is copied through registers and stack frames, and Go
+  cannot address or clear a stack slot it has already moved or left. The pads
+  `crypto/hmac` keeps inside its hash states (we use the standard library's, so
+  there is no handle to clear them).
 - **Not swapped.** The pages that hold the master secret, the slot wrap keys and
   their cipher caches are `mlock`ed (a per-page count, because `munlock` of a
   page undoes every `mlock` of it). `--mlock=auto` (the default) tries and says
   once on stderr if the system refuses (`RLIMIT_MEMLOCK`); `--mlock=required`
-  refuses to open instead; `--mlock=off` does not call `mlock`. The AES round
-  keys inside go-encryptions/ctr, the transient key-encryption keys on the
-  stack and `crypto/hmac`'s internal pads are **not** pinned.
+  refuses to open instead; `--mlock=off` does not call `mlock`. The copies
+  listed above (round keys, stack KEKs, `crypto/hmac` pads) are **not** pinned.
 - **No core file, no debugger.** `theca _serve`, the daemon, sets
   `RLIMIT_CORE` to 0 and, on Linux, `PR_SET_DUMPABLE` to 0 (no core file whatever
   the limit; `ptrace`, `/proc/PID/mem` and `process_vm_readv` refused to a

@@ -30,6 +30,7 @@ type fakeKey struct {
 	silentIdx                                                int  // GetAssertions: this assertion (1-based) carries no output
 
 	pinSeen string
+	pinRef  []byte // the slice the PIN call received, to see it wiped
 	tokens  []authn.Permissions
 
 	// Fingerprint scripting: uvSeq answers UVToken calls in order (nil is a
@@ -55,8 +56,9 @@ func (f *fakeKey) GetInfo(context.Context) (authn.Info, error) { return f.info, 
 func (f *fakeKey) PINRetries(context.Context) (authn.Retries, error) {
 	return f.retries, f.retriesErr
 }
-func (f *fakeKey) PINToken(_ context.Context, pin string, _ authn.PINProtocol, p authn.Permissions, _ string) (authn.Token, error) {
-	f.pinSeen = pin
+func (f *fakeKey) PINTokenBytes(_ context.Context, pin []byte, _ authn.PINProtocol, p authn.Permissions, _ string) (authn.Token, error) {
+	f.pinSeen = string(pin)
+	f.pinRef = pin
 	f.tokens = append(f.tokens, p)
 	return authn.Token{}, f.pinErr
 }
@@ -388,6 +390,10 @@ func TestUVIsUsedOnlyWhenConfigured(t *testing.T) {
 	}
 	if _, err := d.Derive(ctx, salts(1)); !errors.Is(err, theca.ErrNoCredential) || f.uvCalls != 0 || f.pinSeen != "1234" {
 		t.Fatalf("expected a PIN-only walk: %v uvCalls=%d pin=%q", err, f.uvCalls, f.pinSeen)
+	}
+	// The PIN reached the key as bytes and is wiped once the call is over.
+	if len(f.pinRef) != 4 || !bytes.Equal(f.pinRef, make([]byte, 4)) {
+		t.Fatalf("PIN buffer not wiped: %v", f.pinRef)
 	}
 }
 

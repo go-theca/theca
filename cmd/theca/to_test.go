@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -15,6 +16,7 @@ type stored struct {
 	ref    string
 	secret string
 	o      secretsource.StoreOptions
+	raw    []byte // the slice itself, to see whether the command wiped it
 }
 
 // vault replaces the secret manager's write side; failFor makes the store of
@@ -30,7 +32,7 @@ func vault(t *testing.T, failFor ...string) *[]stored {
 				return errors.New("manager locked")
 			}
 		}
-		calls = append(calls, stored{ref, string(secret), o})
+		calls = append(calls, stored{ref, string(secret), o, secret})
 		return nil
 	}
 	return &calls
@@ -49,6 +51,10 @@ func TestCreateStoresGeneratedPasswordAndRecoveryCode(t *testing.T) {
 		t.Fatalf("%+v", *calls)
 	}
 	pw, rc := (*calls)[0].secret, (*calls)[1].secret
+	// The recovery code was bytes all along, and create wiped them (#74).
+	if raw := (*calls)[1].raw; len(raw) != len(rc) || !bytes.Equal(raw, make([]byte, len(rc))) {
+		t.Errorf("the recovery code buffer was not wiped: %q", raw)
+	}
 	if r.out != "" || strings.Contains(r.err, pw) || strings.Contains(r.err, rc) {
 		t.Errorf("nothing secret is printed: out=%q err=%q", r.out, r.err)
 	}
