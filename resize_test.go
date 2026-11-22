@@ -8,15 +8,30 @@ import (
 	"testing"
 
 	"github.com/go-theca/theca/internal/format"
+	"github.com/go-theca/theca/internal/ta1"
 )
 
 // growMem is a memFile that grows on write, like a file made with O_EXCL.
-type growMem struct{ memFile }
+type growMem struct {
+	memFile
+	calls     int // WriteAt calls so far
+	onlyWrite int // the onlyWrite-th WriteAt fails, once (1-based; 0: none)
+	onlySync  int // the onlySync-th Sync fails, once (1-based; 0: none)
+}
 
-func newGrow() *growMem { return &growMem{memFile{failAfter: -1}} }
+func newGrow() *growMem { return &growMem{memFile: memFile{failAfter: -1}} }
+
+func (g *growMem) Sync() error {
+	err := g.memFile.Sync()
+	if g.onlySync > 0 && g.syncs == g.onlySync {
+		return errCut
+	}
+	return err
+}
 
 func (g *growMem) WriteAt(p []byte, off int64) (int, error) {
-	if g.failAfter >= 0 && g.writes >= g.failAfter {
+	g.calls++
+	if g.calls == g.onlyWrite || (g.failAfter >= 0 && g.writes >= g.failAfter) {
 		return 0, errCut
 	}
 	if need := int(off) + len(p); need > len(g.b) {
@@ -29,11 +44,12 @@ func (g *growMem) WriteAt(p []byte, off int64) (int, error) {
 type readCut struct {
 	Backing
 	n, at int
+	once  bool // only the at-th read fails
 }
 
 func (r *readCut) ReadAt(p []byte, off int64) (int, error) {
 	r.n++
-	if r.at > 0 && r.n >= r.at {
+	if r.at > 0 && (r.n == r.at || (r.n > r.at && !r.once)) {
 		return 0, errCut
 	}
 	return r.Backing.ReadAt(p, off)
@@ -180,8 +196,8 @@ func TestResizeErrors(t *testing.T) {
 		ro   ResizeOptions
 		want error
 	}{
-		"rebind counter":         {newGrow(), pwUnlock(), OpenOptions{RebindFor: func(uint32, []byte) (Counter, error) { return nil, nil }}, ResizeOptions{Entries: 20}, ErrOption},
-		"rebind derived counter": {newGrow(), pwUnlock(), OpenOptions{RebindDerived: func(uint32, []byte, []byte) (Counter, error) { return nil, nil }}, ResizeOptions{Entries: 20}, ErrOption},
+		"rebind counter":         {newGrow(), pwUnlock(), OpenOptions{RebindFor: func(uint32, []byte) (Counter, error) { return nil, errCut }}, ResizeOptions{Entries: 20}, ErrOption},
+		"rebind derived counter": {newGrow(), pwUnlock(), OpenOptions{RebindDerived: func(uint32, []byte, []byte) (Counter, error) { return nil, errCut }}, ResizeOptions{Entries: 20}, ErrOption},
 		"destination not empty":  {newMem(100), pwUnlock(), OpenOptions{}, ResizeOptions{Entries: 20}, ErrOption},
 		"destination size":       {sizeErr{newGrow()}, pwUnlock(), OpenOptions{}, ResizeOptions{Entries: 20}, errCut},
 		"wrong password":         {newGrow(), Unlock{Password: []byte("no")}, OpenOptions{}, ResizeOptions{Entries: 20}, nil},
@@ -236,26 +252,48 @@ func TestResizeCrashLeavesSourceIntact(t *testing.T) {
 	if !bytes.Equal(readAll(t, reopen(t, src, pwUnlock())), m) {
 		t.Fatal("the source no longer holds its content")
 	}
+	// ONE write or sync failing, the others fine: a step whose error is dropped
+	// would leave a copy that the later checks refuse for another reason, so the
+	// error returned must be the one that failed.
+	for k := 1; k <= ok.calls; k++ {
+		dst := newGrow()
+		dst.onlyWrite = k
+		if _, err := Resize(ctx, src, pwUnlock(), OpenOptions{}, dst, ResizeOptions{Entries: 20}); !errors.Is(err, errCut) {
+			t.Fatalf("a copy whose write %d failed once: %v", k, err)
+		}
+	}
+	for k := 1; k <= syncs; k++ {
+		dst := newGrow()
+		dst.onlySync = k
+		if _, err := Resize(ctx, src, pwUnlock(), OpenOptions{}, dst, ResizeOptions{Entries: 20}); !errors.Is(err, errCut) {
+			t.Fatalf("a copy whose sync %d failed once: %v", k, err)
+		}
+	}
 }
 
-// Fail every read, from the first to the last: each is an error, never a copy
-// reported done, and the source is not written.
+// Fail every read, from the first to the last, for good and once: each is the
+// error that failed, never a copy reported done, and the source is not written.
 func TestResizeReadFailures(t *testing.T) {
 	src, _ := mkSized(t, 16, 8, CreateOptions{})
 	before := append([]byte(nil), src.b...)
-	for at := 1; ; at++ {
-		if at > 100000 {
-			t.Fatal("no end to the reads")
-		}
-		_, err := Resize(ctx, &readCut{Backing: src, at: at}, pwUnlock(), OpenOptions{}, newGrow(), ResizeOptions{Entries: 20})
-		if !bytes.Equal(src.b, before) {
-			t.Fatalf("the source changed with the read %d failing", at)
-		}
-		if err == nil {
-			if at < 20 {
-				t.Fatalf("read %d failing was not noticed", at)
+	for _, once := range []bool{false, true} {
+		for at := 1; ; at++ {
+			if at > 100000 {
+				t.Fatal("no end to the reads")
 			}
-			return
+			_, err := Resize(ctx, &readCut{Backing: src, at: at, once: once}, pwUnlock(), OpenOptions{}, newGrow(), ResizeOptions{Entries: 20})
+			if !bytes.Equal(src.b, before) {
+				t.Fatalf("the source changed with the read %d failing", at)
+			}
+			if err == nil {
+				if at < 20 {
+					t.Fatalf("read %d failing was not noticed", at)
+				}
+				break
+			}
+			if !errors.Is(err, errCut) {
+				t.Fatalf("read %d failing (once %v): %v", at, once, err)
+			}
 		}
 	}
 }
@@ -268,6 +306,9 @@ func TestResizeRandomExhausted(t *testing.T) {
 	for n := int64(0); n < 400; n++ {
 		_, err := Resize(ctx, src, pwUnlock(), OpenOptions{Rand: io.LimitReader(rand.Reader, n)}, newGrow(), ResizeOptions{Entries: 20})
 		if err != nil {
+			if !errors.Is(err, ta1.ErrNoRand) {
+				t.Fatalf("%d bytes of randomness: %v", n, err)
+			}
 			failed++
 		} else if failed < 89 {
 			t.Fatalf("a source of %d bytes sufficed, after %d refusals", n, failed)
@@ -282,11 +323,12 @@ func TestResizeRandomExhausted(t *testing.T) {
 type dstReadCut struct {
 	growMem
 	n, at int
+	once  bool
 }
 
 func (d *dstReadCut) ReadAt(p []byte, off int64) (int, error) {
 	d.n++
-	if d.at > 0 && d.n >= d.at {
+	if d.at > 0 && (d.n == d.at || (d.n > d.at && !d.once)) {
 		return 0, errCut
 	}
 	return d.growMem.ReadAt(p, off)
@@ -294,17 +336,22 @@ func (d *dstReadCut) ReadAt(p []byte, off int64) (int, error) {
 
 func TestResizeVerificationReadFailures(t *testing.T) {
 	src, _ := mkSized(t, 16, 8, CreateOptions{})
-	for at := 1; ; at++ {
-		if at > 100000 {
-			t.Fatal("no end to the reads")
-		}
-		d := &dstReadCut{growMem: *newGrow(), at: at}
-		_, err := Resize(ctx, src, pwUnlock(), OpenOptions{}, d, ResizeOptions{Entries: 20})
-		if err == nil {
-			if at < 20 {
-				t.Fatalf("read %d failing on the copy was not noticed", at)
+	for _, once := range []bool{false, true} {
+		for at := 1; ; at++ {
+			if at > 100000 {
+				t.Fatal("no end to the reads")
 			}
-			return
+			d := &dstReadCut{growMem: *newGrow(), at: at, once: once}
+			_, err := Resize(ctx, src, pwUnlock(), OpenOptions{}, d, ResizeOptions{Entries: 20})
+			if err == nil {
+				if at < 20 {
+					t.Fatalf("read %d failing on the copy was not noticed", at)
+				}
+				break
+			}
+			if !errors.Is(err, errCut) {
+				t.Fatalf("read %d failing on the copy (once %v): %v", at, once, err)
+			}
 		}
 	}
 }
