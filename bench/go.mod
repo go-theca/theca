@@ -12,6 +12,7 @@ require (
 
 require (
 	github.com/go-authn/harden v0.3.0 // indirect
+	github.com/go-encryptions/hmac v0.1.0 // indirect
 	github.com/go-fleettools/fleettools v0.81.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 )
