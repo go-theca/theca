@@ -34,7 +34,7 @@ var (
 	// is open and mounted (or the attempt failed).
 	startDaemon = spawnDaemon
 	// readyFile is the pipe the daemon tells its parent through.
-	readyFile  = func() *os.File { return os.NewFile(3, "ready") }
+	readyFile  = session.ReadyFile
 	detach     = detachStdio
 	lockFile   = lockContainer
 	executable = os.Executable
