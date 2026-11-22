@@ -137,7 +137,10 @@ type model []byte
 func (m model) check(t testing.TB, c *Container) {
 	t.Helper()
 	got := make([]byte, len(m))
-	if n, err := c.ReadAt(got, 0); err != nil || n != len(m) {
+	var n int
+	var err error
+	within(t, "ReadAt", func() { n, err = c.ReadAt(got, 0) })
+	if err != nil || n != len(m) {
 		t.Fatalf("read all: %d %v", n, err)
 	}
 	if !bytes.Equal(got, m) {
@@ -151,7 +154,10 @@ func (m model) check(t testing.TB, c *Container) {
 
 func put(t testing.TB, c *Container, m model, off int, data []byte) {
 	t.Helper()
-	if n, err := c.WriteAt(data, int64(off)); err != nil || n != len(data) {
+	var n int
+	var err error
+	within(t, "WriteAt", func() { n, err = c.WriteAt(data, int64(off)) })
+	if err != nil || n != len(data) {
 		t.Fatalf("write %d at %d: %d %v", len(data), off, n, err)
 	}
 	copy(m[off:], data)
@@ -633,6 +639,9 @@ func TestSlotManagement(t *testing.T) {
 	// Fill every slot; the 17th is refused.
 	c = reopen(t, f, pwUnlock())
 	for i := 0; ; i++ {
+		if i > 2*format.NumSlots { // a mutant that never refuses must fail, not loop
+			t.Fatalf("%d slots added and none refused", i)
+		}
 		k := randomFactor()
 		if err := c.AddSlot(k); err != nil {
 			if !errors.Is(err, ErrNoSlot) || i != 15 {
