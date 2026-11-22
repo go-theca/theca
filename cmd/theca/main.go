@@ -226,6 +226,15 @@ func warnFileRef(cmd *cobra.Command, flag, ref string) {
 // passwordGiven reports whether the password comes from a file or a manager.
 func (s *secrets) passwordGiven() bool { return s.passwordFile != "" || s.passwordFrom != "" }
 
+// printCode writes a secret and a newline as bytes: Fprintln of a []byte would
+// print numbers, and Fprintf("%s") would copy it into fmt's pooled buffer.
+// A failed write is not reported: the stream is the terminal, and the code
+// has no other copy to fall back to either way.
+func printCode(w io.Writer, code []byte) {
+	_, _ = w.Write(code)
+	_, _ = io.WriteString(w, "\n")
+}
+
 // recoveryGiven reports whether the recovery code comes from a file or a manager.
 func (s *secrets) recoveryGiven() bool { return s.recoveryFile != "" || s.recoveryFrom != "" }
 
@@ -544,9 +553,12 @@ func createCmd() *cobra.Command {
 			}
 			// The code is printed even if closing fails: the container is
 			// formatted and the code is the only copy there will ever be.
+			// code is bytes, wiped when this command is done with it; it is
+			// written to the stream as bytes, never through a string.
+			defer clear(code)
 			var storeErr error
 			if recoveryTo != "" {
-				storeErr = storeSecret(cmd.Context(), recoveryTo, []byte(code), secretsource.StoreOptions{Replace: replace})
+				storeErr = storeSecret(cmd.Context(), recoveryTo, code, secretsource.StoreOptions{Replace: replace})
 			}
 			switch {
 			case recoveryTo != "" && storeErr == nil:
@@ -555,10 +567,10 @@ func createCmd() *cobra.Command {
 				// The store failed: the code is printed after all, because the
 				// container exists and this is the only copy there will ever be.
 				fmt.Fprintf(cmd.ErrOrStderr(), "The recovery code could not be stored in %s (%v); it is printed here, the only copy:\n", recoveryTo, storeErr)
-				fmt.Fprintln(cmd.OutOrStdout(), code)
+				printCode(cmd.OutOrStdout(), code)
 			default:
 				fmt.Fprintln(cmd.ErrOrStderr(), "Recovery code (shown once, never stored; write it down):")
-				fmt.Fprintln(cmd.OutOrStdout(), code)
+				printCode(cmd.OutOrStdout(), code)
 			}
 			if c.Info().RollbackProtected {
 				fmt.Fprintf(cmd.ErrOrStderr(), "rollback counter: TPM NV index %#08x; give --counter tpm to every command that opens this container\n", c.Info().CounterHandle)

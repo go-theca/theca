@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.28.0
+
+### Windows sessions (go-theca/theca#58)
+
+- `theca open`, `close` and `status` now work on Windows: a user-only named pipe whose client SID
+  is checked, detach after the unlock, `LockFileEx` on the container, and a message-only window
+  that closes the session on lock, logoff and suspend. The daemon leaves the OpenSSH job
+  (`CREATE_BREAKAWAY_FROM_JOB` when the job allows it) so it survives the logout, and the profile
+  file is checked by its DACL instead of a POSIX mode. README and DESIGN I26 say what was and was
+  not measured.
+
+### Tests (go-theca/theca#76)
+
+- Test-only: the mutsweep survivors and hangs in `theca.go` are killed (delete mode: 14 survivors
+  and 2 hangs before, 0 and 0 after) and a runaway mutant is caught in seconds by a 10 s deadline.
+
+### Security
+
+- Fewer secret copies (go-theca/theca#74). BREAKING for library callers: `theca.Create` and
+  `format.NewRecoveryCode` return the printed recovery code as `[]byte` (the caller wipes it),
+  not `string`; `create` writes it to the terminal from the bytes and clears it.
+- The PIN reaches the key through go-authn/fido v0.15.0 `PINTokenBytes`: no immutable `string`
+  of the PIN is made any more (the one copy v0.25.0 documented is gone).
+- go-authn/secretsource v0.7.0: on Windows a `file:` secret is now checked against its DACL
+  (see that release's notes for the exact rule).
+- Documented, not fixed: the AES round keys are wiped by `Close` through `ctr.Cipher.Zeroize`
+  only on go-encryptions/ctr's accelerated path (the `crypto/aes` fallback's schedule cannot be
+  cleared), stack copies of by-value KEKs, and `crypto/hmac`'s internal pads. A local wiping HMAC
+  was not adopted: it was not measured against the standard library (load ~29).
+
 ## v0.27.0
 
 - `theca journal resize FILE --out NEW` (go-theca/theca#73): a container made before v0.26.1 has a

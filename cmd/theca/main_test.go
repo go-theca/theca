@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/go-authn/secretsource"
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/internal/format"
 	"github.com/go-theca/theca/internal/kdf"
@@ -196,10 +197,18 @@ func TestSecretFiles(t *testing.T) {
 	if b, err := readSecretFile(exact); err != nil || len(b) != maxSecretFile {
 		t.Errorf("secret of exactly the limit: %d %v", len(b), err)
 	}
-	for in, want := range map[string]string{"a\n": "a", "a\r\n": "a", "a": "a", "\n": "", "": "", "a\n\n": "a\n"} {
+	for in, want := range map[string]string{"a\n": "a", "a\r\n": "a", "a": "a", "a\n\n": "a\n"} {
 		p := secretFile(t, dir, "nl", in, 0o600)
 		if b, err := readSecretFile(p); err != nil || string(b) != want {
 			t.Errorf("%q: got %q %v", in, b, err)
+		}
+	}
+	// go-authn/secretsource v0.7.0: an empty file, or only a line ending, is an
+	// error, not an empty secret (a truncated file must not become an empty PIN).
+	for _, in := range []string{"", "\n"} {
+		p := secretFile(t, dir, "nl", in, 0o600)
+		if b, err := readSecretFile(p); !errors.Is(err, secretsource.ErrEmpty) || len(b) != 0 {
+			t.Errorf("%q: got %q %v, want ErrEmpty", in, b, err)
 		}
 	}
 }

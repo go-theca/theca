@@ -98,7 +98,7 @@ func createJ(t testing.TB, policy Policy, journalEntries uint32) (*Container, *m
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c, f, code
+	return c, f, string(code)
 }
 
 func pwUnlock() Unlock { return Unlock{Password: []byte("correct horse")} }

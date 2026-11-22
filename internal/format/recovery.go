@@ -5,7 +5,6 @@ import (
 	"encoding/base32"
 	"errors"
 	"io"
-	"strings"
 )
 
 // RecoveryBytes is the entropy of a recovery code: 160 bits (DESIGN 6.2).
@@ -19,19 +18,25 @@ var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
 // NewRecoveryCode draws 160 random bits and returns them with their printed
-// form: 32 base32 characters plus a check symbol, in groups of four.
-func NewRecoveryCode(rng io.Reader) (raw []byte, printed string, err error) {
+// form: 32 base32 characters plus a check symbol, in groups of four. Both are
+// byte slices the caller wipes: no immutable string of the code is made here.
+func NewRecoveryCode(rng io.Reader) (raw, printed []byte, err error) {
 	raw = make([]byte, RecoveryBytes)
 	if _, err = io.ReadFull(rng, raw); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
-	s := b32.EncodeToString(raw)
-	s += string(alphabet[checkSymbol(s)])
-	var parts []string
+	s := make([]byte, b32.EncodedLen(len(raw)), b32.EncodedLen(len(raw))+1)
+	b32.Encode(s, raw)
+	s = append(s, alphabet[checkSymbol(s)])
+	printed = make([]byte, 0, len(s)+len(s)/4)
 	for i := 0; i < len(s); i += 4 {
-		parts = append(parts, s[i:min(i+4, len(s))])
+		if i > 0 {
+			printed = append(printed, '-')
+		}
+		printed = append(printed, s[i:min(i+4, len(s))]...)
 	}
-	return raw, strings.Join(parts, "-"), nil
+	clear(s)
+	return raw, printed, nil
 }
 
 // checkSymbol is the sum of the 5-bit values weighted by 2i+1, modulo 32.
@@ -39,7 +44,7 @@ func NewRecoveryCode(rng io.Reader) (raw []byte, printed string, err error) {
 // substitution is caught; an adjacent transposition is caught unless the two
 // characters differ by exactly 16. It is a typo guard only. Used on the
 // encoder side, where the input is known to be in the alphabet.
-func checkSymbol(s string) int {
+func checkSymbol(s []byte) int {
 	sum := 0
 	for i := 0; i < len(s); i++ {
 		v, _ := value(s[i])

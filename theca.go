@@ -397,8 +397,10 @@ func fillRandomAt(f Backing, at, size uint64, rng io.Reader) error {
 }
 
 // Create formats a new container in f. It returns the container and, for
-// both policies, the printed recovery code (shown once, never stored).
-func Create(f Backing, o CreateOptions) (c *Container, printed string, err error) {
+// both policies, the printed recovery code (shown once, never stored). The
+// code is bytes, not a string, so the caller can wipe it after showing it; it
+// is nil when err is not.
+func Create(f Backing, o CreateOptions) (c *Container, printed []byte, err error) {
 	rng := randOr(o.Rand)
 	jn := o.JournalEntries
 	if jn == 0 {
@@ -406,23 +408,23 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 	}
 	shape, err := merkle.NewShape(max(o.Sectors, 1))
 	if err != nil || o.Sectors == 0 {
-		return nil, "", fmt.Errorf("%w: sectors %d", ErrOption, o.Sectors)
+		return nil, nil, fmt.Errorf("%w: sectors %d", ErrOption, o.Sectors)
 	}
 	jn = max(jn, format.MinJournal(shape))
 	geo, err := format.NewGeometry(o.Sectors, jn)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if len(o.Password) == 0 {
-		return nil, "", fmt.Errorf("%w: empty password", ErrOption)
+		return nil, nil, fmt.Errorf("%w: empty password", ErrOption)
 	}
 	if o.Policy != PolicyAny && o.Policy != PolicyTwoOfThree {
-		return nil, "", fmt.Errorf("%w: policy %d", ErrOption, o.Policy)
+		return nil, nil, fmt.Errorf("%w: policy %d", ErrOption, o.Policy)
 	}
 
 	ms, err := ta1.Generate(rng)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer func() {
 		if err != nil {
@@ -432,32 +434,37 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 	var cid [16]byte
 	var salt [format.SaltSize]byte
 	if _, err := io.ReadFull(rng, cid[:]); err != nil {
-		return nil, "", fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+		return nil, nil, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
 	}
 	if _, err := io.ReadFull(rng, salt[:]); err != nil {
-		return nil, "", fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
+		return nil, nil, fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
 	}
 	pw, err := PasswordFactor(o.Hint, o.Password, salt[:])
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer pw.Zeroize()
-	rawRC, printed, err := format.NewRecoveryCode(rng)
+	rawRC, code, err := format.NewRecoveryCode(rng)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
+	defer func() {
+		if err != nil {
+			clear(code) // the caller never receives it, so nobody else can
+		}
+	}()
 	rc := Factor{Kind: "rc", KEK: kdf.KEK(rawRC, "rc")}
 	clear(rawRC)
 	defer rc.Zeroize()
 
 	if err := fillRandom(f, geo.End, rng); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := trunc(f, geo.End); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if _, err := f.WriteAt(salt[:], 0); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
 	c = &Container{f: f, rng: rng, geo: geo, k: ms,
@@ -479,10 +486,10 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 	for _, s := range specs {
 		p, err := c.sealSlot(s)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		if err := c.writeSlot(p.i, p.blob); err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 	}
 	ctr, derived := o.Counter, false
@@ -491,34 +498,34 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 		ctr, err = o.NewCounter(auth)
 		clear(auth)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		derived = true
 	}
 	if ctr != nil {
 		id, err := identityOf(ctr) // before the increment: no identity, no counter moved
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		if err := ctr.Increment(); err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		c0, err := ctr.Read()
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		c.body.Counter = &format.Counter{Handle: ctr.Handle(), Name: ctr.Name(), Bound: c0, TPMID: id, DerivedAuth: derived}
 		c.info.RollbackProtected = true
 		c.info.CounterHandle = ctr.Handle()
 	}
 	if err := c.writeHeader(); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := f.Sync(); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	c.fillInfo()
-	return c, printed, nil
+	return c, code, nil
 }
 
 // trunc grows a backing that supports it so a fresh file has its size.
