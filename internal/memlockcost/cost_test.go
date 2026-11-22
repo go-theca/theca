@@ -1,5 +1,6 @@
 // Package memlockcost holds a measurement, not a check (go-theca/theca#68): what
-// mlock of the key pages costs. It has no code of its own, so it adds nothing to
+// mlock of the key pages costs, through internal/pin over
+// github.com/go-authn/harden/memlock. It has no code of its own, so it adds nothing to
 // coverage, and its test is skipped unless asked for.
 package memlockcost
 
@@ -15,7 +16,7 @@ import (
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/internal/format"
 	"github.com/go-theca/theca/internal/kdf"
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-theca/theca/internal/pin"
 )
 
 // TestMlockCost measures open latency and sustained write and read of the
@@ -58,12 +59,12 @@ func TestMlockCost(t *testing.T) {
 	buf := make([]byte, 1<<20)
 	const writeVol = 2 << 20 // writes commit to the file, which costs seconds per MiB here
 
-	modes := []memlock.Mode{memlock.Off, memlock.BestEffort}
-	open, write, read := map[memlock.Mode][]time.Duration{}, map[memlock.Mode][]time.Duration{}, map[memlock.Mode][]time.Duration{}
-	defer memlock.SetMode(memlock.BestEffort)
+	modes := []pin.Mode{pin.Off, pin.BestEffort}
+	open, write, read := map[pin.Mode][]time.Duration{}, map[pin.Mode][]time.Duration{}, map[pin.Mode][]time.Duration{}
+	defer pin.SetMode(pin.BestEffort)
 	for r := 0; r < rounds; r++ {
 		for _, m := range modes {
-			memlock.SetMode(m)
+			pin.SetMode(m)
 			start := time.Now()
 			c, err := theca.Open(context.Background(), f, theca.Unlock{Password: slices.Clone(pw)}, theca.OpenOptions{})
 			if err != nil {
@@ -87,7 +88,7 @@ func TestMlockCost(t *testing.T) {
 			c.Close()
 		}
 	}
-	report := func(name string, d map[memlock.Mode][]time.Duration, per float64, unit string) {
+	report := func(name string, d map[pin.Mode][]time.Duration, per float64, unit string) {
 		for _, m := range modes {
 			s := slices.Clone(d[m])
 			slices.Sort(s)

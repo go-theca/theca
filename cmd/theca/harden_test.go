@@ -8,7 +8,8 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-authn/harden/memlock"
+	"github.com/go-theca/theca/internal/pin"
 )
 
 // The in-process daemon tests must not deny a debugger to the test binary, nor
@@ -42,9 +43,11 @@ func TestUnlockWipesThePasswordAndTheRecoveryCode(t *testing.T) {
 
 func TestMlockFlag(t *testing.T) {
 	_, path, pw, _ := newContainer(t)
-	restore := memlock.SetSyscalls(func(unsafe.Pointer, uintptr) error { return errors.New("cannot allocate memory") },
-		func(unsafe.Pointer, uintptr) {})
-	defer func() { restore(); memlock.SetMode(memlock.BestEffort); memlock.SetReporter(nil) }()
+	restore := pin.SetLocker(memlock.NewLocker(memlock.Syscalls{
+		Lock:   func(unsafe.Pointer, uintptr) error { return errors.New("cannot allocate memory") },
+		Unlock: func(unsafe.Pointer, uintptr) {},
+	}, uintptr(os.Getpagesize())))
+	defer func() { restore(); pin.SetMode(pin.BestEffort); pin.SetReporter(nil) }()
 
 	if r := run(nil, "info", path, "--mlock", "maybe"); r.e == nil || !strings.Contains(r.e.Error(), `"maybe"`) {
 		t.Fatalf("a bad mode: %v", r.e)

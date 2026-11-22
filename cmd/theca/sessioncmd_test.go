@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/go-theca/theca"
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-theca/theca/internal/pin"
 	"github.com/go-theca/theca/profile"
 	"github.com/go-theca/theca/session"
 	"github.com/go-theca/theca/share"
@@ -505,14 +505,14 @@ func TestSpawnDaemon(t *testing.T) {
 	}
 	// The daemon is a new process: it runs in the mlock mode of this one.
 	t.Setenv("THECA_FAKE_DAEMON", "args")
-	for _, m := range []memlock.Mode{memlock.BestEffort, memlock.Required, memlock.Off} {
-		memlock.SetMode(m)
+	for _, m := range []pin.Mode{pin.BestEffort, pin.Required, pin.Off} {
+		pin.SetMode(m)
 		i, err := spawnDaemon(context.Background(), "bio", null)
 		if err != nil || i.Mount != "--mlock "+m.String() {
 			t.Fatalf("mode %v: %+v %v", m, i, err)
 		}
 	}
-	memlock.SetMode(memlock.BestEffort)
+	pin.SetMode(pin.BestEffort)
 	t.Setenv("THECA_FAKE_DAEMON", "err")
 	if _, err := spawnDaemon(context.Background(), "bio", null); err == nil || err.Error() != "wrong password" {
 		t.Fatal(err)

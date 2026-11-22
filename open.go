@@ -9,8 +9,8 @@ import (
 	"github.com/go-theca/theca/internal/format"
 	"github.com/go-theca/theca/internal/journal"
 	"github.com/go-theca/theca/internal/kdf"
-	"github.com/go-theca/theca/internal/memlock"
 	"github.com/go-theca/theca/internal/merkle"
+	"github.com/go-theca/theca/internal/pin"
 	"github.com/go-theca/theca/internal/ta1"
 )
 
@@ -151,7 +151,7 @@ func Open(ctx context.Context, f Backing, u Unlock, o OpenOptions) (*Container, 
 	ms := unlockSlots(cands, table)
 	// unlockSlots reads a refusal to pin a key's pages as "this slot does not
 	// open"; under --mlock=required that is the answer, not ErrNoMatch.
-	if err := memlock.Failed(); err != nil {
+	if err := pin.Failed(); err != nil {
 		if ms != nil {
 			ms.Zeroize()
 		}

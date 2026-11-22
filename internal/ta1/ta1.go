@@ -17,8 +17,9 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/go-authn/harden/memlock"
 	"github.com/go-encryptions/ctr"
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-theca/theca/internal/pin"
 	"golang.org/x/crypto/chacha20"
 )
 
@@ -74,14 +75,14 @@ type Keys struct {
 }
 
 // pin keeps the pages that hold k and its cache out of swap, per the memlock
-// mode: a refusal is an error only in Required mode. The AES round keys live in
+// mode (internal/pin): a refusal is an error only in Required mode. The AES round keys live in
 // go-encryptions/ctr and are not pinned.
 func (k *Keys) pin() error {
 	var err error
-	if k.mem[0], err = memlock.Lock(unsafe.Pointer(k), unsafe.Sizeof(*k)); err != nil {
+	if k.mem[0], err = pin.Lock(unsafe.Pointer(k), unsafe.Sizeof(*k)); err != nil {
 		return err
 	}
-	if k.mem[1], err = memlock.Lock(unsafe.Pointer(k.c), unsafe.Sizeof(*k.c)); err != nil {
+	if k.mem[1], err = pin.Lock(unsafe.Pointer(k.c), unsafe.Sizeof(*k.c)); err != nil {
 		k.mem[0].Release()
 		k.mem[0] = nil
 	}
