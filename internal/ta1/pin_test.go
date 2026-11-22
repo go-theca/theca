@@ -3,24 +3,29 @@ package ta1
 import (
 	"bytes"
 	"errors"
+	"os"
 	"testing"
 	"unsafe"
 
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-authn/harden/memlock"
+	"github.com/go-theca/theca/internal/pin"
 )
 
 func refuse(t *testing.T, at int) *int {
 	t.Helper()
 	calls := new(int)
-	restore := memlock.SetSyscalls(func(unsafe.Pointer, uintptr) error {
-		*calls++
-		if at == 0 || *calls == at {
-			return errors.New("operation not permitted")
-		}
-		return nil
-	}, func(unsafe.Pointer, uintptr) {})
-	memlock.SetMode(memlock.Required)
-	t.Cleanup(func() { restore(); memlock.SetMode(memlock.BestEffort) })
+	restore := pin.SetLocker(memlock.NewLocker(memlock.Syscalls{
+		Lock: func(unsafe.Pointer, uintptr) error {
+			*calls++
+			if at == 0 || *calls == at {
+				return errors.New("operation not permitted")
+			}
+			return nil
+		},
+		Unlock: func(unsafe.Pointer, uintptr) {},
+	}, uintptr(os.Getpagesize())))
+	pin.SetMode(pin.Required)
+	t.Cleanup(func() { restore(); pin.SetMode(pin.BestEffort) })
 	return calls
 }
 
@@ -70,7 +75,7 @@ func TestPinFailsWhenOnlyTheKeysAreRefused(t *testing.T) {
 }
 
 func TestZeroizeReleasesTheRegions(t *testing.T) {
-	memlock.SetMode(memlock.BestEffort)
+	pin.SetMode(pin.BestEffort)
 	k, err := FromBytes(make([]byte, MSSize))
 	if err != nil {
 		t.Fatal(err)

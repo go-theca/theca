@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/internal/lockwatch"
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-theca/theca/internal/pin"
 	"github.com/go-theca/theca/profile"
 	"github.com/go-theca/theca/session"
 	"github.com/go-theca/theca/share"
@@ -282,7 +282,7 @@ func spawnDaemon(ctx context.Context, name string, stderr *os.File) (session.Inf
 		return session.Info{}, err
 	}
 	// The daemon is a new process: it gets the mode this one runs in.
-	return session.StartAttached(ctx, exe, name, os.Stdin, stderr, "--mlock", memlock.Current().String())
+	return session.StartAttached(ctx, exe, name, os.Stdin, stderr, "--mlock", pin.Current().String())
 }
 
 // secretsOf turns a profile into the flags `theca serve` would have been given.

@@ -26,7 +26,7 @@ import (
 	"github.com/go-theca/theca"
 	"github.com/go-theca/theca/fido2"
 	"github.com/go-theca/theca/internal/format"
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-theca/theca/internal/pin"
 )
 
 func enrollKeyCmd() *cobra.Command {
@@ -445,13 +445,13 @@ func RootCmd() *cobra.Command {
 	var mlockMode string
 	root.PersistentFlags().StringVar(&mlockMode, "mlock", "auto", "keep the pages that hold keys out of swap: auto (try, say once if refused), off, or required (refuse to run if the system refuses)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		m, err := memlock.ParseMode(mlockMode)
+		m, err := pin.ParseMode(mlockMode)
 		if err != nil {
 			return err
 		}
-		memlock.SetMode(m)
+		pin.SetMode(m)
 		w := cmd.ErrOrStderr()
-		memlock.SetReporter(func(err error) {
+		pin.SetReporter(func(err error) {
 			fmt.Fprintf(w, "warning: %v: the keys may be written to swap (raise RLIMIT_MEMLOCK, or use --mlock=required to refuse to run)\n", err)
 		})
 		return nil

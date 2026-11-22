@@ -16,6 +16,8 @@ github.com/geoffgarside/ber v1.1.0 h1:qTmFG4jJbwiSzSXoNJeHcOprVzZ8Ulde2Rrrifu5U9
 github.com/geoffgarside/ber v1.1.0/go.mod h1:jVPKeCbj6MvQZhwLYsGwaGI52oUorHoHKNecGT85ZCc=
 github.com/go-authn/fido v0.15.0 h1:Yo+fRQ44wiiItutVDkUO9CFh+WypfAMlNlKo+sZrF4k=
 github.com/go-authn/fido v0.15.0/go.mod h1:HCJih3OxqpYgf/rPOJKEpQE9q+WcIx2QMUWMDLh2wao=
+github.com/go-authn/harden v0.3.0 h1:KripIm2WdN0gUfwuw7N16i93zDe59w59fhmo80eCMt4=
+github.com/go-authn/harden v0.3.0/go.mod h1:sceLxhnMHtExHEp9bU8XHKCw2fp+WFjh6Ri6Yxu2aVA=
 github.com/go-authn/secretsource v0.8.0 h1:3pUW2vvuftmeikSrxY5a9ZMye5Y8BTplMEKfc7IeeXU=
 github.com/go-authn/secretsource v0.8.0/go.mod h1:LHIVIzADGmzgE5IwtqTmKMcwM6RGvUXX+qZQojtmzlM=
 github.com/go-encryptions/argon2 v0.1.0 h1:yBY2J+iy8ySMwnAFe4phqx9horyqzbWu2VuPOtpLDwk=
