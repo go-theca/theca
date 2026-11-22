@@ -931,6 +931,7 @@ from one version, suite or purpose is never valid in another.
 | TPM 2.0 seal / NV / import, transports | go-tpm2 | `tpm2` repo file list (`nv.go` lacks NV_Increment) |
 | FIDO2 CTAP2 client | go-authn/fido | README (no `hmac-secret` yet) |
 | Keychain via purego | go-macos/keychain | README |
+| macOS screen-lock / sleep / session notifications (extracted from `internal/lockwatch`, v0.32.0) | go-macos/sessionwatch | README |
 | Code generation for SIMD kernels | go-asmgen, go-simd | local clone `go-asmgen-asmgen` |
 | HCTR2, Adiantum, Kemeleon, Elligator 2, Shamir | **none in our orgs** | `fleetfind chacha / argon / kem / hctr / adiantum / shamir / poly1305` over 2253 repositories: no match (names and descriptions only, not code) |
 

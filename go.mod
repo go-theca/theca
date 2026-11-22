@@ -5,7 +5,6 @@ go 1.27.4
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8
-	github.com/ebitengine/purego v0.11.3
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-authn/fido v0.15.0
 	github.com/go-authn/harden v0.3.0
@@ -18,6 +17,7 @@ require (
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/go-macos/objc v0.13.0
+	github.com/go-macos/sessionwatch v0.1.0
 	github.com/go-mswin/webauthn v0.5.0
 	github.com/go-mswin/win32 v0.7.0
 	github.com/go-scikit/refbench v0.3.0
@@ -34,6 +34,7 @@ require (
 
 require (
 	github.com/cloudsoda/sddl v0.0.0-20261105185302-1c8f96799263 // indirect
+	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/go-filesystems/hostcopy v0.1.0 // indirect
 	github.com/go-filesystems/inflight v0.6.0 // indirect
