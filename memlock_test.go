@@ -6,23 +6,26 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-authn/harden/memlock"
+	"github.com/go-theca/theca/internal/pin"
 )
 
 // lockCalls runs fn with a page size of one byte, so that no two keys share a
 // page and every lock reaches the system call, and with the call number n from
 // which every lock is refused (0: none is). It returns how many calls were made.
 func lockCalls(n int, fn func()) (calls int) {
-	defer memlock.SetPageSize(1)()
-	restore := memlock.SetSyscalls(func(unsafe.Pointer, uintptr) error {
-		calls++
-		if n > 0 && calls >= n {
-			return errors.New("operation not permitted")
-		}
-		return nil
-	}, func(unsafe.Pointer, uintptr) {})
-	memlock.SetMode(memlock.Required)
-	defer func() { restore(); memlock.SetMode(memlock.BestEffort) }()
+	restore := pin.SetLocker(memlock.NewLocker(memlock.Syscalls{
+		Lock: func(unsafe.Pointer, uintptr) error {
+			calls++
+			if n > 0 && calls >= n {
+				return errors.New("operation not permitted")
+			}
+			return nil
+		},
+		Unlock: func(unsafe.Pointer, uintptr) {},
+	}, 1))
+	pin.SetMode(pin.Required)
+	defer func() { restore(); pin.SetMode(pin.BestEffort) }()
 	fn()
 	return calls
 }

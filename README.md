@@ -513,7 +513,10 @@ daemon. What `theca` does about it, and what it does not:
   their cipher caches are `mlock`ed (a per-page count, because `munlock` of a
   page undoes every `mlock` of it). `--mlock=auto` (the default) tries and says
   once on stderr if the system refuses (`RLIMIT_MEMLOCK`); `--mlock=required`
-  refuses to open instead; `--mlock=off` does not call `mlock`. The copies
+  refuses to open instead; `--mlock=off` does not call `mlock`. The pinning is
+  [go-authn/harden/memlock](https://github.com/go-authn/harden): `mlock` on
+  Linux and the BSDs, and, since v0.31.0, `VirtualLock` on Windows (which
+  counts against the process's minimum working set). The copies
   listed above (the fallback's round keys, stack KEKs, `crypto/hmac` pads) are
   **not** pinned.
 - **No core file, no debugger.** `theca _serve`, the daemon, sets

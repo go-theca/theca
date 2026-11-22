@@ -3,10 +3,12 @@ package format
 import (
 	"crypto/rand"
 	"errors"
+	"os"
 	"testing"
 	"unsafe"
 
-	"github.com/go-theca/theca/internal/memlock"
+	"github.com/go-authn/harden/memlock"
+	"github.com/go-theca/theca/internal/pin"
 	"github.com/go-theca/theca/internal/ta1"
 )
 
@@ -22,10 +24,12 @@ func TestWrapReportsARefusedLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restore := memlock.SetSyscalls(func(unsafe.Pointer, uintptr) error { return errors.New("operation not permitted") },
-		func(unsafe.Pointer, uintptr) {})
-	memlock.SetMode(memlock.Required)
-	defer func() { restore(); memlock.SetMode(memlock.BestEffort) }()
+	restore := pin.SetLocker(memlock.NewLocker(memlock.Syscalls{
+		Lock:   func(unsafe.Pointer, uintptr) error { return errors.New("operation not permitted") },
+		Unlock: func(unsafe.Pointer, uintptr) {},
+	}, uintptr(os.Getpagesize())))
+	pin.SetMode(pin.Required)
+	defer func() { restore(); pin.SetMode(pin.BestEffort) }()
 	if _, err := SealWrap(ms, &kek, 0, rand.Reader); err == nil {
 		t.Fatal("SealWrap ignored the refusal")
 	}

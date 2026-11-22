@@ -10,6 +10,15 @@
   The two swtpm tests that mount a real container (rollback, identity pinning) stay here, in
   `cmd/theca/counter_swtpm_test.go`; the package's own swtpm and unit tests went with it.
 
+## v0.31.0
+
+- Memory pinning and the core-dump hardening now come from `github.com/go-authn/harden/memlock`
+  v0.3.0 (the package moved out of `internal/memlock`; the mode policy stays in `internal/pin`).
+  `--mlock` now has a Windows implementation: `VirtualLock`, where it used to do nothing. A refusal
+  follows the same modes (`auto` says it once, `required` refuses to open, `off` skips).
+- One `DisableDumps` for Linux and macOS (`RLIMIT_CORE` 0, plus `PR_SET_DUMPABLE` 0 on Linux and
+  `PT_DENY_ATTACH` on macOS), tested in a child process.
+
 ## v0.29.0
 
 - `--password-from`, `--recovery-from` and `--pin-from` accept `systemd-creds:NAME` (Linux), through
