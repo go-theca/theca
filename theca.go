@@ -9,8 +9,8 @@ package theca
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -832,7 +832,7 @@ func (c *Container) loadMeta(m uint64) (*[4096]byte, error) {
 	if _, err := c.f.ReadAt(b[:], int64(c.geo.MetaOff+m*4096)); err != nil {
 		return nil, err
 	}
-	if got := merkle.N1(c.k, b[:]); !hmac.Equal(got[:], v[:]) {
+	if got := merkle.N1(c.k, b[:]); subtle.ConstantTimeCompare(got[:], v[:]) != 1 {
 		return nil, fmt.Errorf("%w: metadata block %d", ErrCorrupt, m)
 	}
 	c.meta.Put(m, b)
@@ -859,7 +859,7 @@ func (c *Container) readSector(s uint64, dst []byte) error {
 	ent := blk[e*64 : (e+1)*64]
 	seed := (*[ta1.SeedSize]byte)(ent[:ta1.SeedSize])
 	tag := (*[ta1.SectorTagSize]byte)(ent[ta1.SeedSize:])
-	if un := c.k.UnwrittenTag(&c.body.CID, s, seed); hmac.Equal(un[:], tag[:]) {
+	if un := c.k.UnwrittenTag(&c.body.CID, s, seed); subtle.ConstantTimeCompare(un[:], tag[:]) == 1 {
 		clear(dst)
 		return nil
 	}
