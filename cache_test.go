@@ -58,7 +58,9 @@ func TestMetadataCacheIsBounded(t *testing.T) {
 			put(t, c, m, off, rnd(1+rng.IntN(600)))
 		} else {
 			got := make([]byte, 1+rng.IntN(600))
-			if _, err := c.ReadAt(got, int64(off)); err != nil || !bytes.Equal(got, m[off:off+len(got)]) {
+			var err error
+			within(t, "ReadAt", func() { _, err = c.ReadAt(got, int64(off)) })
+			if err != nil || !bytes.Equal(got, m[off:off+len(got)]) {
 				t.Fatalf("read at %d: %v", off, err)
 			}
 		}
