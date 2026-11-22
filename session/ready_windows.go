@@ -6,9 +6,23 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// queryJob is replaced by tests.
+var queryJob = windows.QueryInformationJobObject
+
+// jobLimits are the limit flags of the job the process runs in (a nil job handle
+// names the calling process's own job); the error says there is none, or that it
+// cannot be read.
+func jobLimits() (uint32, error) {
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	err := queryJob(0, windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)), nil)
+	return info.BasicLimitInformation.LimitFlags, err
+}
 
 // inheritReady hands the child w as an inherited handle (os.Pipe makes
 // non-inheritable ones, and ExtraFiles does not exist on Windows), names its
@@ -20,7 +34,7 @@ func inheritReady(child *exec.Cmd, w *os.File) error {
 		return err
 	}
 	child.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags:              windows.CREATE_NEW_PROCESS_GROUP,
+		CreationFlags:              windows.CREATE_NEW_PROCESS_GROUP | breakawayFlag(jobLimits()),
 		AdditionalInheritedHandles: []syscall.Handle{syscall.Handle(h)},
 	}
 	child.Env = append(os.Environ(), readyEnvEntry(uintptr(h)))

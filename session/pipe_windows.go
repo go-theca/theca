@@ -54,7 +54,14 @@ func listenEndpoint(path string) (net.Listener, error) {
 		c.Close()
 		return nil, ErrAlreadyOpen
 	}
-	return listenPipe(path, &winio.PipeConfig{SecurityDescriptor: pipeSDDL(sid)})
+	l, err := listenPipe(path, &winio.PipeConfig{SecurityDescriptor: pipeSDDL(sid)})
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		// FILE_FLAG_FIRST_PIPE_INSTANCE: the name exists, its instances are all
+		// busy (the dial above timed out) and we cannot make a first one. The
+		// name holds our SID, so the owner is this user's other process.
+		return nil, ErrAlreadyOpen
+	}
+	return l, err
 }
 
 func dialEndpoint(ctx context.Context, path string) (net.Conn, error) {

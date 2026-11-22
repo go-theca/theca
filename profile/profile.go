@@ -471,8 +471,8 @@ func (s Store) Load() (map[string]Profile, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s: not a regular file", s.Path)
 	}
-	if st.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s: mode %04o: group and others must have no access (chmod 600)", s.Path, st.Mode().Perm())
+	if err := checkPrivate(f, s.Path, st); err != nil {
+		return nil, err
 	}
 	// The size bound is held by the limited read and by Parse, not by st.Size().
 	data, err := readAll(io.LimitReader(f, MaxFileBytes+1))
