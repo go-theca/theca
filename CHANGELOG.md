@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.27.0
+
+- `theca journal resize FILE --out NEW` (go-theca/theca#73): a container made before v0.26.1 has a
+  journal of 64 entries and writes at about 12 MiB/s; the journal size is part of the layout, so
+  it could not change. `resize` writes NEW, a copy with the default journal for the volume (or
+  `--entries N`), through `theca.Resize`. Why a copy and not an in-place rewrite: the journal sits
+  before the metadata, the tree and the data, so a new size moves every area after it, and an
+  in-place move has a crash window in which neither layout is whole. A copy has none: FILE is
+  never rewritten, NEW is created with `O_EXCL` and synced, then reopened, checked sector by
+  sector and compared with FILE by the SHA-256 of the volume, and only then reported. The swap is
+  printed, never run. Key slots, the counter binding (handle, name, TPM identity, derived
+  authValue) and the content are carried over; the sectors are copied as they are (a sector is
+  sealed under the container id and its index, not its offset) and the header is sealed again.
+  The container has no hidden volume (DESIGN section 8 is a verdict, not a feature), so the area
+  the copy leaves out is only random padding.
+- Rollback counter: opening FILE is an ordinary mount and moves the counter once. The check of
+  NEW is done with the counter's increment swallowed, so it does not move it again; NEW's first
+  real mount finishes that increment and moves the counter past FILE, which is refused as a
+  rollback from then on. Until then FILE still opens: keep it until NEW has been mounted once.
+- go-filesystems/smb v0.17.1: the first write of exactly 64 KiB on a handle is served (smb#70,
+  the credit check counted the fixed part of the WRITE request). `TestFirstWriteOf64KiB` fails on
+  v0.16.1 and passes on v0.17.1.
+- Tests: the copy is cut at every write and every sync, and failed once at every write, sync and
+  read, on both files; the error returned is the one that failed and FILE is byte for byte as it
+  was. `internal/synccost`: `TestResizeShareCost` (`THECA_SHARE_RESIZE`).
+
 ## v0.26.1
 
 - Sustained writes are 4 to 8 times faster on a new container (go-theca/theca#73). The issue
