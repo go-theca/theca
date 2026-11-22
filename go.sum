@@ -36,8 +36,8 @@ github.com/go-filesystems/interface v0.6.0 h1:+7nA5FHgs/B03rZ9p81bkm0+6ew9fEntTF
 github.com/go-filesystems/interface v0.6.0/go.mod h1:u9v8mvapNV8djzObwCECdyd2g6JBU6HNTR4EAqxOn6U=
 github.com/go-filesystems/kerneljudge v0.3.1 h1:XEzYYvR1V8PYfZ5BwR8YJjvkvaYgOHacxf2pdIb1Ggk=
 github.com/go-filesystems/kerneljudge v0.3.1/go.mod h1:SK6ri2WMRBATCd+RUhsOn+gLCy+F41a1VGebjQECZgs=
-github.com/go-filesystems/smb v0.17.1 h1:4kYA+Uvz76nLKL3LNSnk8aTyCDGWZLr/OkYd69v3L20=
-github.com/go-filesystems/smb v0.17.1/go.mod h1:jczHB5WCUUr96vI7wTnZCeQKoC1JLMtRBVFEa1xhZ9c=
+github.com/go-filesystems/smb v0.17.2 h1:SBcOucYATe9hGhboiU6qHfPX1ZbgifQZmCJO1hRe5ro=
+github.com/go-filesystems/smb v0.17.2/go.mod h1:jczHB5WCUUr96vI7wTnZCeQKoC1JLMtRBVFEa1xhZ9c=
 github.com/go-fleettools/fleettools v0.81.0 h1:UnMflmNw5b82Z+7Ums7UVaW5RrGuACCVmSwytwT1hxw=
 github.com/go-fleettools/fleettools v0.81.0/go.mod h1:y/o3p2HZAvto9J5G5gtPxhN45zgvaYFAXCY9RCK/lQw=
 github.com/go-freedesktop/gvfs v0.1.1 h1:mzp3qJq9qucK3eFeJMLuImpbXlS/cgxP41wnHBEIcpc=

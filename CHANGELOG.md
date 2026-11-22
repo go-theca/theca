@@ -8,6 +8,8 @@
   falling back to a 2 s poll); the log lines now start `sessionwatch:` instead of `close-on-lock:`.
   The Linux (logind) and Windows (session notifications) halves stay in `internal/lockwatch`.
   Still **not measured** on a real Mac: a real lock and a real sleep (go-theca/theca#59).
+- `github.com/go-filesystems/smb` v0.17.1 -> v0.17.2: handles belong to their session and tree,
+  and a FLUSH of an unknown handle returns `STATUS_FILE_CLOSED`.
 
 ## v0.30.0
 

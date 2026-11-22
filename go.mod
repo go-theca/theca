@@ -13,7 +13,7 @@ require (
 	github.com/go-encryptions/ctr v0.1.1
 	github.com/go-fileshare/automount v0.1.1
 	github.com/go-filesystems/exfat v0.7.0
-	github.com/go-filesystems/smb v0.17.1
+	github.com/go-filesystems/smb v0.17.2
 	github.com/go-gnulinux/fido v0.6.0
 	github.com/go-macos/fido v0.6.0
 	github.com/go-macos/objc v0.13.0
