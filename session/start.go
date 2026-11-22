@@ -61,8 +61,10 @@ func startProcess(ctx context.Context, exe, name string, in, out *os.File, captu
 	} else if out != nil {
 		child.Stdout, child.Stderr = out, out
 	}
-	child.ExtraFiles = []*os.File{w}
-	err = child.Start()
+	err = inheritReady(child, w)
+	if err == nil {
+		err = child.Start()
+	}
 	w.Close()
 	if lines != nil {
 		// The child has its own copy of the write end; ours must go for the

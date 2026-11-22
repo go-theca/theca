@@ -1,3 +1,5 @@
+github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
+github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8 h1:lBnZ8FJ6W+ftjYb3Exp5udAlHLLl5J3wO1nStg6abVI=
 github.com/cloudsoda/go-smb2 v0.0.0-20261105190815-95be04a983b8/go.mod h1:LryNlMPoHo2c2K8tlyI/c0OH8yAryg9wPFvgRGmt2pA=
 github.com/cloudsoda/sddl v0.0.0-20261105185302-1c8f96799263 h1:gua/EcVKg9gnxPrSrvHrz3jwrdnrYHKxmynexDwCrto=

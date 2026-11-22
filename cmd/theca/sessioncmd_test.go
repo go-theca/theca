@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func init() {
 	if mode == "" {
 		return
 	}
-	ready := os.NewFile(3, "ready")
+	ready := session.ReadyFile() // descriptor 3, or the handle ReadyEnv names
 	switch mode {
 	case "ok":
 		session.Report(ready, session.Response{OK: true, Info: &session.Info{Name: os.Args[2], Mount: "/Volumes/THECA"}})
@@ -457,7 +458,7 @@ func TestSessionSeams(t *testing.T) {
 	// The defaults the other tests replace.
 	// Descriptor 3 of the test binary belongs to someone else: no finalizer may close it.
 	f := readyFile()
-	if f == nil {
+	if f == nil && runtime.GOOS != "windows" { // there, only a started daemon has one
 		t.Fatal("no ready file")
 	}
 	keepAlive = f

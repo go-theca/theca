@@ -49,8 +49,29 @@ checked). A second `open` of the same container is refused. With
 the machine sleeps or the session ends: logind over D-Bus on Linux, the
 screen-lock, will-sleep and session-resign notifications on macOS (delivered
 before the sleep, no polling; `theca open` says on standard error whether it
-listens or, if the notifications cannot be heard, polls every 2 s). Windows has no
-auto-close yet. On Linux only logind's own signals about this process's own
+listens or, if the notifications cannot be heard, polls every 2 s).
+
+On Windows the same commands work. The channel is a named pipe,
+`\\.\pipe\theca-<user SID>-<name>`, whose security descriptor grants access to
+that SID alone; the daemon also reads the SID of each client's process token
+(`GetNamedPipeClientProcessId`) and refuses any other. The container file is
+locked with `LockFileEx` (a byte far beyond the end of the file, so reading the
+container is not blocked), which makes a second `open` fail before it touches the
+rollback counter. `theca open` starts the daemon with your console, so a password or PIN
+prompt works, and the daemon lets go of the console (`FreeConsole`) once the
+container is open and in a process group of its own; it leaves the job
+of an ssh session when that job allows it, so it survives the logout. Close-on-lock listens through a hidden
+message-only window on a locked OS thread: `WTSRegisterSessionNotification` for
+the lock and the logoff of the daemon's own session, `RegisterSuspendResumeNotification`
+for the suspend; if the window cannot be made or registered, `open` fails like on
+Linux (`--close-on-lock=false` opts out). Limits: the daemon's session is the
+one `theca open` ran in, so an ssh session (session 0 here) hears nothing of the console's lock
+and a mounted drive letter belongs to that logon session; Windows has no call that makes a
+process undumpable (no `PR_SET_DUMPABLE`, `PT_DENY_ATTACH` or `RLIMIT_CORE`
+equivalent), so `theca` only sets `SetErrorMode` (no error-reporting box) and
+wipes its keys; `--mlock` is not implemented on Windows yet. The profile file is
+checked through its DACL (owner, the system and the administrators only) instead of mode
+bits. On Linux only logind's own signals about this process's own
 session count (sender `org.freedesktop.login1`, the session of this process's
 pid or `XDG_SESSION_ID`), and a session that is already locked at `open` closes
 at once. If the watcher cannot start (no logind, no session), `open` fails and
