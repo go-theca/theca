@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.32.0
+
+- The macOS lock/sleep detection moved out of theca: `internal/lockwatch`'s darwin half is now
+  `github.com/go-macos/sessionwatch` (`Watch(ctx) (<-chan Event, error)`; `Lock`, `Sleep`,
+  `Session`), usable by any macOS program. Behaviour is unchanged (notifications, proven by a probe,
+  falling back to a 2 s poll); the log lines now start `sessionwatch:` instead of `close-on-lock:`.
+  The Linux (logind) and Windows (session notifications) halves stay in `internal/lockwatch`.
+  Still **not measured** on a real Mac: a real lock and a real sleep (go-theca/theca#59).
+- `github.com/go-filesystems/smb` v0.17.1 -> v0.17.2: handles belong to their session and tree,
+  and a FLUSH of an unknown handle returns `STATUS_FILE_CLOSED`.
+
 ## v0.30.0
 
 - The TPM NV counter moved out of theca: `github.com/go-theca/theca/tpmcounter` is now
