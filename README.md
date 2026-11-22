@@ -113,7 +113,8 @@ theca export vault.theca --password-from keychain:theca/vault > disk.img
   browser-integration socket; the reference is the URL field of the entry: enable
   it, run `secretsource keepassxc associate` once and approve it in KeePassXC.
   Lookups by UUID or path are refused: KeePassXC 2.8.0 crashes on an entry without
-  a URL); `file:PATH` still works there but is deprecated. A reference holds no secret, and
+  a URL); `systemd-creds:NAME` (Linux: a systemd credential, see
+  "From a systemd service" below); `file:PATH` still works there but is deprecated. A reference holds no secret, and
   no scheme runs a command. Each excludes the `-file` flag of the same secret.
   See [go-authn/secretsource](https://github.com/go-authn/secretsource).
 
@@ -123,6 +124,42 @@ theca export vault.theca --password-from keychain:theca/vault > disk.img
   theca info vault.theca --fido2 --password-from secretservice:theca/vault --pin-from secretservice:fido/yubikey-5c
   theca info vault.theca --fido2 --password-from 'keepassxc:https://theca.invalid/vault' --pin-from 'keepassxc:https://fido.invalid/yubikey-5c'
   ```
+- **From a systemd service** (Linux): `--password-from systemd-creds:NAME`
+  (and `--recovery-from`, `--pin-from`) read the credential `NAME` that systemd
+  delivers in `$CREDENTIALS_DIRECTORY`, or decrypt it from a
+  `credstore.encrypted` directory, with go-authn/secretsource v0.8.0. The bytes
+  are taken **exactly**, with no newline trimming: seal the password with
+  `printf %s`. Measured on systemd 257 (Debian 13) with `--with-key=host`, not
+  with a TPM2 key.
+
+  ```sh
+  # once, as root: seal the password to this machine (the host key)
+  printf %s 'the vault password' | systemd-creds encrypt --with-key=host --name=theca - /etc/credstore.encrypted/theca.cred
+  ```
+
+  ```ini
+  # /etc/systemd/system/theca-vault.service
+  [Service]
+  LoadCredentialEncrypted=theca
+  ExecStart=/usr/local/bin/theca serve /srv/vault.theca --password-from systemd-creds:theca
+  ```
+
+  **Choose what the credential is sealed to, and plan the way back.**
+  `--with-key=tpm2` seals to the TPM2 chip and binds to no PCR by default.
+  Adding PCRs makes the credential unreadable whenever they change, and the
+  service then fails closed, with the vault shut: a bare `--tpm2-pcrs=7`
+  (Secure Boot state) can lock every credential after a firmware or shim update
+  or a vTPM migration, so do not use it without a recovery path. Better:
+  `--with-key=host+tpm2` (TPM2 chip and the host key file
+  `/var/lib/systemd/credential.secret`; survives firmware updates, lost with
+  either); a signed PCR policy (`--tpm2-public-key=PATH`, PCR 11 by default,
+  signatures from `systemd-measure`, no re-sealing for a new boot component); or
+  `systemd-pcrlock` (`unlock-firmware-code` before a firmware update,
+  `make-policy` after). Keep the password where this machine is not needed (a
+  paper copy, a password manager, or the recovery code: `--recovery-from` takes
+  a credential too) and **re-seal** with `systemd-creds encrypt` when decryption
+  fails; the error says so. See the
+  [secretsource documentation](https://github.com/go-authn/secretsource#systemd-credentials-systemd-credsname).
 - `create --password-to REF [--generate 24] [--recovery-to REF2] [--replace]` stores the new
   password (typed twice, or drawn) and the recovery code in a secret manager, with no plaintext
   file and nothing secret printed. The password is stored before the container is created; if

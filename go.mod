@@ -8,7 +8,7 @@ require (
 	github.com/ebitengine/purego v0.11.3
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/go-authn/fido v0.15.0
-	github.com/go-authn/secretsource v0.7.0
+	github.com/go-authn/secretsource v0.8.0
 	github.com/go-encryptions/argon2 v0.1.0
 	github.com/go-encryptions/ctr v0.1.1
 	github.com/go-fileshare/automount v0.1.1
