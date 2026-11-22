@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.26.1
+
+- Sustained writes are 4 to 8 times faster on a new container (go-theca/theca#73). The issue
+  blamed one commit per 4 KiB sector; the code already batches (`WriteAt` commits only when the
+  journal is full, DESIGN I12), and the 0.7 MiB/s was a journal of 8 entries. Every commit costs
+  about four flushes whatever its size, so the journal size is the batch size. `create` now sizes
+  the journal at one entry per 16 sectors, clamped to 64..4096 (`theca.DefaultJournal`), instead
+  of always 64. On macOS, 64 MiB through `Container.WriteAt`: 12.0 to 92.4 MiB/s; through the SMB
+  share: 7.6 to 28.8 MiB/s. No format change: the journal size was already a header field, and an
+  existing container keeps its own (64 entries by default: about 12 MiB/s).
+- Tests: a `WriteAt` larger than the journal, cut at every backing write and with every flush
+  failing in turn, reopens whole (each sector old or new, new ones a prefix, tags and tree verify).
+- `internal/synccost`: the measurement (`THECA_SYNC_COST`, `THECA_SHARE_COST`).
+
 ## v0.26.0
 
 - The TPM counter works on Windows (go-theca/theca#37): `--tpm-device` defaults to `tbs:`

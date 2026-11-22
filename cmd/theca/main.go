@@ -582,7 +582,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().StringVar(&size, "size", "", "logical size, a multiple of 4096 bytes (suffixes K, M, G, T)")
 	cmd.Flags().StringVar(&policy, "policy", "any", "any: password or recovery code alone opens it; 2of3: both are needed")
 	cmd.Flags().StringVar(&fsKind, "fs", "", "format the volume with this filesystem: exfat (serve needs one); empty: a raw volume")
-	cmd.Flags().Uint32Var(&journal, "journal", 0, "journal entries (0: the default)")
+	cmd.Flags().Uint32Var(&journal, "journal", 0, "journal entries: the most one commit holds (0: one per 16 sectors, from 64 to 4096)")
 	cmd.MarkFlagRequired("size")
 	return cmd
 }

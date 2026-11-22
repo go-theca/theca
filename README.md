@@ -193,6 +193,12 @@ theca serve vault.theca --credentials-out creds.json   # or: hand the account to
 - A copy of a file written through the share is one transaction per journal
   budget, not one per file (DESIGN §19 I12). A crash in the middle of a large
   copy can leave the exFAT metadata of that copy half-written, as on a disk.
+- The journal budget is the batch: every commit costs about four flushes
+  (`F_FULLFSYNC` on macOS) whatever its size. `create` sizes the journal at one
+  entry per 16 sectors, from 64 to 4096 (`--journal` overrides), so a 64 MiB
+  sustained write through the share went from 7.6 to 28.8 MiB/s on macOS
+  (go-theca/theca#73). The size is fixed at creation: a container made before
+  v0.26.1 keeps its 64 entries.
 
 #### Beyond loopback: `--network`
 
