@@ -955,8 +955,10 @@ from one version, suite or purpose is never valid in another.
   `RLIMIT_CORE` 0 and `PR_SET_DUMPABLE` 0 (Linux) or `PT_DENY_ATTACH` (macOS).
   Since v0.28.0 (#74): no `string` copy of the PIN (go-authn/fido v0.15.0
   `PINTokenBytes`) or of the recovery code (`Create` returns it as `[]byte`,
-  `create` prints and wipes it). Not covered, and known: the AES round keys in
-  go-encryptions/ctr (its cipher has no `Wipe`/`Close`; asked in #74), the
+  `create` prints and wipes it). Not covered, and known: the AES round keys of
+  go-encryptions/ctr are wiped on `Close` (`Cipher.Zeroize`) but only on its
+  accelerated path; the `crypto/aes` fallback's schedule lives in the standard
+  library and cannot be cleared (#74), the
   by-value `[32]byte` KEKs returned by `kdf.KEK`/`kdf.Pair` (their stack copies
   are not addressable from Go; every heap slice and struct field that holds one
   is cleared), and the pads `crypto/hmac` keeps in its hash states (a local

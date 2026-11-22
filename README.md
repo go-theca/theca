@@ -439,9 +439,12 @@ daemon. What `theca` does about it, and what it does not:
   goes to the FIDO2 library through its `[]byte` call (go-authn/fido v0.15.0,
   `PINTokenBytes`), and `create` prints the recovery code it just made from a
   `[]byte` it then wipes (`theca.Create` returns it as `[]byte`).
-- **Known remaining copies, not wiped.** The AES round keys inside
-  go-encryptions/ctr (its cipher has no `Wipe`/`Close` yet: go-theca/theca#74).
-  The transient key-encryption keys: where they live in a heap slice or in a
+- **Known remaining copies, not wiped.** The AES round keys are wiped on
+  `Close` (`ctr.Cipher.Zeroize`), but only on the accelerated path (arm64 and
+  amd64 with AES-NI): the `crypto/aes` fallback, used elsewhere, keeps its key
+  schedule inside the standard library, where it cannot be cleared, and the key
+  expansion's own temporaries are not visible from here (go-encryptions/ctr,
+  go-theca/theca#74). The transient key-encryption keys: where they live in a heap slice or in a
   field of a value we own they are cleared, but a `[32]byte` returned by value
   (`kdf.KEK`, `kdf.Pair`) is copied through registers and stack frames, and Go
   cannot address or clear a stack slot it has already moved or left. The pads
@@ -452,7 +455,8 @@ daemon. What `theca` does about it, and what it does not:
   page undoes every `mlock` of it). `--mlock=auto` (the default) tries and says
   once on stderr if the system refuses (`RLIMIT_MEMLOCK`); `--mlock=required`
   refuses to open instead; `--mlock=off` does not call `mlock`. The copies
-  listed above (round keys, stack KEKs, `crypto/hmac` pads) are **not** pinned.
+  listed above (the fallback's round keys, stack KEKs, `crypto/hmac` pads) are
+  **not** pinned.
 - **No core file, no debugger.** `theca _serve`, the daemon, sets
   `RLIMIT_CORE` to 0 and, on Linux, `PR_SET_DUMPABLE` to 0 (no core file whatever
   the limit; `ptrace`, `/proc/PID/mem` and `process_vm_readv` refused to a

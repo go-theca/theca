@@ -11,9 +11,10 @@
   of the PIN is made any more (the one copy v0.25.0 documented is gone).
 - go-authn/secretsource v0.7.0: on Windows a `file:` secret is now checked against its DACL
   (see that release's notes for the exact rule).
-- Documented, not fixed: the AES round keys in go-encryptions/ctr (needs a `Wipe`/`Close` on the
-  cipher, asked in #74), stack copies of by-value KEKs, and `crypto/hmac`'s internal pads. A local
-  wiping HMAC was not adopted: it was not measured against the standard library (load ~29).
+- Documented, not fixed: the AES round keys are wiped by `Close` through `ctr.Cipher.Zeroize`
+  only on go-encryptions/ctr's accelerated path (the `crypto/aes` fallback's schedule cannot be
+  cleared), stack copies of by-value KEKs, and `crypto/hmac`'s internal pads. A local wiping HMAC
+  was not adopted: it was not measured against the standard library (load ~29).
 
 ## v0.27.0
 
