@@ -197,8 +197,27 @@ theca serve vault.theca --credentials-out creds.json   # or: hand the account to
   (`F_FULLFSYNC` on macOS) whatever its size. `create` sizes the journal at one
   entry per 16 sectors, from 64 to 4096 (`--journal` overrides), so a 64 MiB
   sustained write through the share went from 7.6 to 28.8 MiB/s on macOS
-  (go-theca/theca#73). The size is fixed at creation: a container made before
-  v0.26.1 keeps its 64 entries.
+  (go-theca/theca#73). The size is part of the layout, so it cannot change in
+  place: a container made before v0.26.1 keeps its 64 entries until you copy it
+  with `theca journal resize` (below).
+
+#### Resizing the journal of an existing container
+
+```sh
+theca journal resize vault.theca --out vault-new.theca --password-from keychain:theca/vault --device bio   # the factors that open it
+```
+
+`resize` writes `vault-new.theca`, a copy whose journal has the default size for
+the volume (or `--entries N`). Keys, slots, the policy, the rollback counter
+binding and the content are carried over. The copy is created exclusively (an
+existing `--out` is refused), synced, reopened, verified sector by sector and
+compared with the original by the hash of the whole volume; nothing is reported
+before that passes. `vault.theca` is never rewritten (opening it is an ordinary
+mount, and that is all), and nothing is swapped for you: the command prints the
+two `mv` lines to run. With a TPM counter, the first real mount of the copy moves
+the counter past the old file, which is refused as a rollback from then on, so
+keep it until the copy has been mounted once. Containers have no hidden volume
+(DESIGN section 8), so there is nothing in the file that the copy leaves behind.
 
 #### Beyond loopback: `--network`
 

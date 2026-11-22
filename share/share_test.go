@@ -1,8 +1,10 @@
 package share
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -485,5 +487,42 @@ func TestLiveRepeatedNetworkMounts(t *testing.T) {
 		if err := s.Stop(); err != nil {
 			t.Fatalf("round %d: stop: %v", i, err)
 		}
+	}
+}
+
+// A write of exactly 64 KiB as the FIRST request on a handle is served at every
+// dialect (go-filesystems/smb#70: the credit check counted the fixed part of the
+// WRITE request, so the first 64 KiB write was refused; fixed in smb v0.17.1).
+func TestFirstWriteOf64KiB(t *testing.T) {
+	c := newContainer(t, true)
+	s, err := Start(context.Background(), c, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	data := make([]byte, 64<<10)
+	for i := range data {
+		data[i] = byte(i * 7)
+	}
+	for _, dialect := range []uint16{0x0210, 0x0302, 0x0311} {
+		fs, err := dial(t, s, dialect, false)
+		if err != nil {
+			t.Fatalf("dialect %#x: %v", dialect, err)
+		}
+		name := fmt.Sprintf("first-%x.bin", dialect)
+		f, err := fs.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n, err := f.Write(data); err != nil || n != len(data) {
+			t.Fatalf("dialect %#x: a first write of %d bytes: %d, %v", dialect, len(data), n, err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := fs.ReadFile(name); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("dialect %#x: read back %d bytes: %v", dialect, len(got), err)
+		}
+		fs.Umount()
 	}
 }

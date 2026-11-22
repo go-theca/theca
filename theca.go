@@ -375,7 +375,10 @@ func randOr(r io.Reader) io.Reader {
 }
 
 // fillRandom writes a ChaCha20 keystream (key from rng) over [0, size).
-func fillRandom(f Backing, size uint64, rng io.Reader) error {
+func fillRandom(f Backing, size uint64, rng io.Reader) error { return fillRandomAt(f, 0, size, rng) }
+
+// fillRandomAt writes a ChaCha20 keystream (key from rng) over [at, at+size).
+func fillRandomAt(f Backing, at, size uint64, rng io.Reader) error {
 	var kn [44]byte
 	if _, err := io.ReadFull(rng, kn[:]); err != nil {
 		return fmt.Errorf("%w: %v", ta1.ErrNoRand, err)
@@ -386,7 +389,7 @@ func fillRandom(f Backing, size uint64, rng io.Reader) error {
 		n := min(uint64(len(buf)), size-off)
 		clear(buf[:n])
 		c.XORKeyStream(buf[:n], buf[:n])
-		if _, err := f.WriteAt(buf[:n], int64(off)); err != nil {
+		if _, err := f.WriteAt(buf[:n], int64(at+off)); err != nil {
 			return err
 		}
 	}

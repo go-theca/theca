@@ -448,7 +448,7 @@ func RootCmd() *cobra.Command {
 		return nil
 	}
 	root.AddCommand(createCmd(), infoCmd(), verifyCmd(), exportCmd(), importCmd(), enrollKeyCmd(), serveCmd(), slotsCmd(), counterCmd(),
-		profileCmd(), openCmd(), closeCmd(), statusCmd(), serveProfileCmd())
+		journalCmd(), profileCmd(), openCmd(), closeCmd(), statusCmd(), serveProfileCmd())
 	return root
 }
 
