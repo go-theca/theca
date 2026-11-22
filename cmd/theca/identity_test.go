@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-theca/theca"
-	"github.com/go-theca/theca/tpmcounter"
+	"github.com/go-tpm2/nvcounter"
 )
 
 func TestCLITPMIdentity(t *testing.T) {
@@ -90,7 +90,7 @@ func TestCLISwtpmAnotherTPMIsRefused(t *testing.T) {
 	if r := run(nil, append([]string{"create", path, "--size", "1M"}, flags(devA)...)...); r.e != nil || !strings.Contains(r.err, "counter TPM identity: ") {
 		t.Fatalf("create: %v %q", r.e, r.err)
 	}
-	a, err := tpmcounter.Open(tpmcounter.Options{Device: devA, Handle: tpmcounter.First, Auth: []byte("index secret")})
+	a, err := nvcounter.Open(nvcounter.Options{Device: devA, Handle: nvcounter.First, Auth: []byte("index secret")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestCLISwtpmAnotherTPMIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The attacker's TPM: the same handle, raised to the bound.
-	b, err := tpmcounter.Create(tpmcounter.Options{Device: devB, Auth: []byte("index secret")})
+	b, err := nvcounter.Create(nvcounter.Options{Device: devB, Auth: []byte("index secret")})
 	if err != nil {
 		t.Fatal(err)
 	}

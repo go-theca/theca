@@ -1,8 +1,9 @@
-package tpmcounter
+package main
 
-// The attack of go-theca/theca#39, on two real software TPMs: a second TPM
-// where someone defines the same index (same Name) and raises it to the bound
-// of an old copy of the container.
+// A real container on a real software TPM, through go-tpm2/nvcounter: the
+// tests that lived in the tpmcounter package before it moved to go-tpm2
+// (they need a container, which that package must not depend on). Skipped
+// when swtpm is not installed, unless THECA_REQUIRE_SWTPM is set.
 
 import (
 	"bytes"
@@ -11,39 +12,114 @@ import (
 	"os"
 	"testing"
 
+	"github.com/go-tpm2/nvcounter"
+
 	"github.com/go-theca/theca"
 )
+
+// The counter is a theca.Counter that names its TPM.
+var _ theca.IdentifiedCounter = (*nvcounter.Counter)(nil)
+
+func TestSwtpmRollbackProtection(t *testing.T) {
+	dev := startSwtpmDevice(t)
+	opts := nvcounter.Options{Device: dev, Auth: []byte("index secret")}
+	ctr, err := nvcounter.Create(opts)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if ctr.Handle() != nvcounter.First {
+		t.Fatalf("handle %#x, want the first free one", ctr.Handle())
+	}
+
+	f, err := os.CreateTemp("", "theca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	pw := []byte("correct horse")
+	c, _, err := theca.Create(theca.FileBacking{File: f}, theca.CreateOptions{
+		Sectors: 256, Password: pw, Counter: ctr})
+	if err != nil {
+		t.Fatalf("theca.Create: %v", err)
+	}
+	if !c.Info().RollbackProtected || c.Info().CounterHandle != nvcounter.First {
+		t.Fatalf("info %+v", c.Info())
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The state a stolen copy of the container would have: now, before any mount.
+	old, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	open := func() (*theca.Container, error) {
+		return theca.Open(context.Background(), theca.FileBacking{File: f},
+			theca.Unlock{Password: pw}, theca.OpenOptions{
+				CounterFor: func(h uint32, name []byte) (theca.Counter, error) {
+					o := opts
+					o.Handle = h
+					return nvcounter.Open(o)
+				}})
+	}
+	// Two honest mounts: the counter moves once per mount.
+	before, _ := ctr.Read()
+	for i := 0; i < 2; i++ {
+		c, err := open()
+		if err != nil {
+			t.Fatalf("mount %d: %v", i, err)
+		}
+		c.Close()
+	}
+	after, _ := ctr.Read()
+	if after != before+2 {
+		t.Fatalf("counter %d -> %d after two mounts", before, after)
+	}
+	// Put the older image back: refused, and the counter does not move.
+	if _, err := f.WriteAt(old, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open(); !errors.Is(err, theca.ErrRollback) {
+		t.Fatalf("rolled-back image: %v", err)
+	}
+	if v, _ := ctr.Read(); v != after {
+		t.Fatalf("a refused mount moved the counter: %d -> %d", after, v)
+	}
+	// Undo: delete the index (owner password empty on swtpm).
+	if err := ctr.Destroy(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // withoutIdentity hides Identity: what a container made before the pin was.
 type withoutIdentity struct{ theca.Counter }
 
+// The attack of go-theca/theca#39, on two real software TPMs: a second TPM
+// where someone defines the same index (same Name) and raises it to the bound
+// of an old copy of the container.
 func TestSwtpmIdentityPinning(t *testing.T) {
-	devA, devB := startSwtpm(t), startSwtpm(t)
+	devA, devB := startSwtpmDevice(t), startSwtpmDevice(t)
 	auth := []byte("index secret")
-	optsA := Options{Device: devA, Auth: auth}
-	optsB := Options{Device: devB, Auth: auth}
+	optsA := nvcounter.Options{Device: devA, Auth: auth}
+	optsB := nvcounter.Options{Device: devB, Auth: auth}
 
-	ctrA, err := Create(optsA)
+	ctrA, err := nvcounter.Create(optsA)
 	if err != nil {
 		t.Fatal(err)
 	}
 	idA, err := ctrA.Identity()
-	if err != nil || len(idA) != IDSize {
+	if err != nil || len(idA) != nvcounter.IDSize {
 		t.Fatalf("identity of A: %x %v", idA, err)
 	}
-	ctrB, err := Create(optsB)
+	ctrB, err := nvcounter.Create(optsB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	idB, err := ctrB.Identity()
 	if err != nil || bytes.Equal(idA, idB) {
 		t.Fatalf("two TPMs, identities %x and %x (%v)", idA, idB, err)
-	}
-	if again, _ := ctrA.Identity(); !bytes.Equal(again, idA) {
-		t.Fatal("the identity of one TPM changed between two calls")
-	}
-	if ctrA.Handle() != ctrB.Handle() {
-		t.Fatalf("handles %#x and %#x", ctrA.Handle(), ctrB.Handle())
 	}
 
 	mk := func(c theca.Counter) *os.File {
@@ -62,11 +138,11 @@ func TestSwtpmIdentityPinning(t *testing.T) {
 		}
 		return f
 	}
-	openOn := func(f *os.File, o Options) (*theca.Container, error) {
+	openOn := func(f *os.File, o nvcounter.Options) (*theca.Container, error) {
 		return theca.Open(context.Background(), theca.FileBacking{File: f}, theca.Unlock{Password: []byte("pw")},
 			theca.OpenOptions{CounterFor: func(h uint32, _ []byte) (theca.Counter, error) {
 				o.Handle = h
-				return Open(o)
+				return nvcounter.Open(o)
 			}})
 	}
 	// The attacker's counter: the same handle, the same Name, raised to exactly
@@ -147,7 +223,7 @@ func TestSwtpmIdentityPinning(t *testing.T) {
 			if err := ctrB.Destroy(); err != nil {
 				return nil, err
 			}
-			return Create(Options{Device: devB, Auth: auth, Handle: h})
+			return nvcounter.Create(nvcounter.Options{Device: devB, Auth: auth, Handle: h})
 		}})
 	if err != nil {
 		t.Fatalf("rebind on B: %v", err)

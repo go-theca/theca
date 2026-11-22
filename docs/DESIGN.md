@@ -406,7 +406,7 @@ including the nonces, 1.56%). Above level 1 there are ⌈22/7⌉ = 4 levels of
 
 | Platform | Mechanism | From pure Go? | Notes |
 |---|---|---|---|
-| Linux, Windows with TPM 2.0 | NV index of type `TPM_NT_COUNTER`, incremented with `TPM2_NV_Increment` (TCG TPM 2.0 Library Part 3 rev 1.83, §31.8, opened) | Yes: go-tpm2/tpm2 v0.9.0 has `NVDefineCounter`, `NVIncrementAuth`, `NVReadCounter` (`nvcounter.go`), used by `tpmcounter`; Linux `/dev/tpmrm0`, software TPMs, and Windows TBS through go-tpm2/devtpm v0.4.0 (`OpenTBS`; measured only to `TBS_E_TPM_NOT_FOUND`, §19 I22) | Part 3, p. 376: a newly defined counter starts "greater than any count value for any NV counter on the TPM since the time of TPM manufacture", so undefine-and-redefine cannot reset a **counter**, but an attacker could redefine the handle as an ordinary index (see the protocol below). `TPMA_NV_ORDERLY` is **not** used: after a non-orderly shutdown it advances the counter by `MAX_ORDERLY_COUNT` (§31.8.1, note 2). |
+| Linux, Windows with TPM 2.0 | NV index of type `TPM_NT_COUNTER`, incremented with `TPM2_NV_Increment` (TCG TPM 2.0 Library Part 3 rev 1.83, §31.8, opened) | Yes: go-tpm2/tpm2 v0.9.0 has `NVDefineCounter`, `NVIncrementAuth`, `NVReadCounter` (`nvcounter.go`), used by go-tpm2/nvcounter (moved there from theca's `tpmcounter` package in v0.30.0); Linux `/dev/tpmrm0`, software TPMs, and Windows TBS through go-tpm2/devtpm v0.4.0 (`OpenTBS`; measured only to `TBS_E_TPM_NOT_FOUND`, §19 I22) | Part 3, p. 376: a newly defined counter starts "greater than any count value for any NV counter on the TPM since the time of TPM manufacture", so undefine-and-redefine cannot reset a **counter**, but an attacker could redefine the handle as an ordinary index (see the protocol below). `TPMA_NV_ORDERLY` is **not** used: after a non-orderly shutdown it advances the counter by `MAX_ORDERLY_COUNT` (§31.8.1, note 2). |
 | macOS | Secure Enclave counter lockboxes exist (Apple Platform Security guide, opened) but serve passcode attempts | **No third-party interface found** in the guide. That is not proof of absence; the developer documentation could not be read (JS-only page). | Remote witness, or none |
 | Any | Remote witness: a service that signs `(cid, e)` and refuses to sign a lower `e` | Yes | Availability dependency. Design later (C2SP tlog-witness is a candidate, **not opened**). |
 | Any, experimental | FIDO2 authenticator signature counter | go-authn/fido parses `signCount` | Fragile: counters may be global per key, and failed unlocks advance them. Research only. |
@@ -538,14 +538,14 @@ refuse, warn, or record "rollback-unprotected" in the header?
 hierarchy with an empty authValue, so on a TPM whose administrator set an
 endorsement password a pinned container was refused at every mount: a denial of
 service for the legitimate owner. `--tpm-endorsement-auth-from REF` supplies the
-password (`create`, `counter rebind` and every mount); `tpmcounter.Options.EndorsementAuth`
+password (`create`, `counter rebind` and every mount); `nvcounter.Options.EndorsementAuth`
 goes to `tpm2.EKIdentityAuth` (go-tpm2/tpm2 v0.12.0). The flag takes a secret
 manager reference only (`keychain:`, `secretservice:`, `keepassxc:`): a `file:`
 reference is refused, so that no password file sits beside the hardware keys.
 `--tpm-owner-auth-from` and `--tpm-auth-from` are the same for the other two
 passwords; the `-file` flags stay for now and are to be deprecated (go-theca/theca#55).
 When the TPM answers `TPM_RC_BAD_AUTH` or `TPM_RC_AUTH_FAIL`, the error is
-`tpmcounter.ErrEndorsementAuth` and the message names the flag.
+`nvcounter.ErrEndorsementAuth` and the message names the flag.
 
 **Does a wrong endorsement password count toward the dictionary-attack lockout?
 No.** TCG TPM 2.0 Part 1 rev 1.59, 19.8.1 (p. 132, opened): "The authValue
@@ -589,7 +589,7 @@ increment the counter, so cannot push it forward to deny service by anything but
 deleting the index, which the owner can always do (§19 I22). It does not
 protect against whoever unlocks the container; they hold the master secret anyway.
 The derived value lives in the process while a counter object exists (a
-`tpmcounter.Counter` holds its options); it is not wiped when the command exits
+`nvcounter.Counter` holds its options); it is not wiped when the command exits
 normally beyond Go's GC (§13).
 
 ---
