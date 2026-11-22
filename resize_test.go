@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/go-theca/theca/internal/format"
@@ -381,6 +382,21 @@ func TestVerifyResizedRefuses(t *testing.T) {
 	bad.b[geo.DataOff+100] ^= 1
 	if err := verifyResized(ctx, bad, pwUnlock(), OpenOptions{}, nil, info); err == nil {
 		t.Error("a corrupted copy verified")
+	}
+	// Damage the sectors' reads never touch (a metadata block or a tree node of
+	// an area nobody wrote) is found by the sector-by-sector verification, not by
+	// the hash: some block of the metadata and the tree must be caught by it.
+	verifyOnly := 0
+	for off := geo.MetaOff; off < geo.DataOff; off += format.Align {
+		bad := dst.clone()
+		bad.b[off+100] ^= 1
+		err := verifyResized(ctx, bad, pwUnlock(), OpenOptions{}, nil, info)
+		if err != nil && strings.Contains(err.Error(), "does not verify") {
+			verifyOnly++
+		}
+	}
+	if verifyOnly == 0 {
+		t.Error("no damage was caught by the verification itself")
 	}
 	// A copy that does not open.
 	if err := verifyResized(ctx, newMem(1<<20), pwUnlock(), OpenOptions{}, nil, info); err == nil {
