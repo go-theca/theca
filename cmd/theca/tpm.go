@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/go-theca/theca"
-	"github.com/go-theca/theca/tpmcounter"
+	"github.com/go-tpm2/nvcounter"
 )
 
 // tpmCounter is a counter that can also be deleted again.
@@ -21,15 +21,15 @@ type tpmCounter interface {
 
 // The TPM, replaceable by tests (which use a fake counter).
 var (
-	createCounter = func(o tpmcounter.Options) (tpmCounter, error) {
-		c, err := tpmcounter.Create(o)
+	createCounter = func(o nvcounter.Options) (tpmCounter, error) {
+		c, err := nvcounter.Create(o)
 		if err != nil {
 			return nil, err
 		}
 		return c, nil
 	}
-	openCounter = func(o tpmcounter.Options) (theca.Counter, error) {
-		c, err := tpmcounter.Open(o)
+	openCounter = func(o nvcounter.Options) (theca.Counter, error) {
+		c, err := nvcounter.Open(o)
 		if err != nil {
 			return nil, err
 		}
@@ -40,9 +40,9 @@ var (
 // removeCounter deletes the counter at o.Handle under the owner password. It
 // reports whether there was one: an index that is absent, or is not a theca
 // counter, is left alone. Replaceable by tests.
-var removeCounter = func(o tpmcounter.Options) (bool, error) {
-	c, err := tpmcounter.Open(o)
-	if errors.Is(err, tpmcounter.ErrNoCounter) || errors.Is(err, tpmcounter.ErrNotCounter) {
+var removeCounter = func(o nvcounter.Options) (bool, error) {
+	c, err := nvcounter.Open(o)
+	if errors.Is(err, nvcounter.ErrNoCounter) || errors.Is(err, nvcounter.ErrNotCounter) {
 		return false, nil
 	}
 	if err != nil {
@@ -112,10 +112,10 @@ func (f *tpmFlags) on() (bool, error) {
 	return false, fmt.Errorf("--counter %q: want tpm", f.counter)
 }
 
-// options builds the tpmcounter options; owner says whether the owner password
+// options builds the nvcounter options; owner says whether the owner password
 // is needed (create).
-func (f *tpmFlags) options(ctx context.Context, owner bool) (tpmcounter.Options, func(), error) {
-	o := tpmcounter.Options{Device: f.device, Handle: f.handle}
+func (f *tpmFlags) options(ctx context.Context, owner bool) (nvcounter.Options, func(), error) {
+	o := nvcounter.Options{Device: f.device, Handle: f.handle}
 	wipe := func() { clear(o.Auth); clear(o.OwnerAuth); clear(o.EndorsementAuth) }
 	var err error
 	switch {
@@ -148,7 +148,7 @@ func (f *tpmFlags) options(ctx context.Context, owner bool) (tpmcounter.Options,
 
 // withAuth is o with the derived authValue of a counter; the copy is the
 // counter's, the caller's slice is wiped when the callback returns.
-func withAuth(o tpmcounter.Options, auth []byte) tpmcounter.Options {
+func withAuth(o nvcounter.Options, auth []byte) nvcounter.Options {
 	o.Auth = append([]byte(nil), auth...)
 	return o
 }
@@ -277,7 +277,7 @@ const identityRecovery = "if this is a different TPM on purpose (the machine or 
 // the recovery.
 func (f *tpmFlags) hint(err error) error {
 	switch {
-	case errors.Is(err, tpmcounter.ErrEndorsementAuth):
+	case errors.Is(err, nvcounter.ErrEndorsementAuth):
 		return fmt.Errorf("%w: this TPM has an endorsement hierarchy password: give --tpm-endorsement-auth-from REF with the right one "+
 			"(a wrong password does not count toward the TPM's dictionary-attack lockout, TCG Part 1 rev 1.59, 19.8.1)", err)
 	case errors.Is(err, theca.ErrCounterIdentity):
@@ -286,7 +286,7 @@ func (f *tpmFlags) hint(err error) error {
 		return fmt.Errorf("%w (--counter %s); to bind it to a counter, `theca counter rebind FILE --counter tpm`", err, f.counter)
 	case errors.Is(err, theca.ErrCounter) && f.counter == "":
 		return fmt.Errorf("%w: this container is bound to a TPM counter, give --counter tpm", err)
-	case errors.Is(err, tpmcounter.ErrNoCounter), errors.Is(err, tpmcounter.ErrNotCounter), errors.Is(err, theca.ErrCounter):
+	case errors.Is(err, nvcounter.ErrNoCounter), errors.Is(err, nvcounter.ErrNotCounter), errors.Is(err, theca.ErrCounter):
 		return fmt.Errorf("%w: %s", err, recovery)
 	}
 	return err

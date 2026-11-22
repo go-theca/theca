@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.30.0
+
+- The TPM NV counter moved out of theca: `github.com/go-theca/theca/tpmcounter` is now
+  `github.com/go-tpm2/nvcounter` (same API: `Options`, `Counter`, `Create`, `Open`, the `Err*`
+  values, `First`, `Span`, `IDSize`, `DefaultLinuxDevice`, `TBSDevice`; error messages start
+  `nvcounter:`). Nothing in it was theca-specific, and other go-tpm2 users can have it now.
+  **Breaking for importers of `tpmcounter`** (the CLI is unchanged): change the import path.
+  The two swtpm tests that mount a real container (rollback, identity pinning) stay here, in
+  `cmd/theca/counter_swtpm_test.go`; the package's own swtpm and unit tests went with it.
+
 ## v0.29.0
 
 - `--password-from`, `--recovery-from` and `--pin-from` accept `systemd-creds:NAME` (Linux), through

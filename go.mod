@@ -20,8 +20,8 @@ require (
 	github.com/go-mswin/webauthn v0.5.0
 	github.com/go-mswin/win32 v0.7.0
 	github.com/go-scikit/refbench v0.3.0
-	github.com/go-tpm2/common v0.3.0
 	github.com/go-tpm2/devtpm v0.4.0
+	github.com/go-tpm2/nvcounter v0.1.0
 	github.com/go-tpm2/tpm2 v0.12.0
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/spf13/cobra v1.10.2
@@ -43,6 +43,7 @@ require (
 	github.com/go-macos/iokit v0.14.0 // indirect
 	github.com/go-macos/keychain v0.3.1 // indirect
 	github.com/go-macos/netfs v0.1.0 // indirect
+	github.com/go-tpm2/common v0.3.0 // indirect
 	github.com/go-volumes/gpt v0.3.0 // indirect
 	github.com/go-volumes/safeio v0.0.0-20261101001828-0e1734761f39 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect

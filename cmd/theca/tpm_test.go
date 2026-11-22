@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-theca/theca"
-	"github.com/go-theca/theca/tpmcounter"
+	"github.com/go-tpm2/nvcounter"
 )
 
 // fakeCounter is a TPM NV counter in memory. Its Name changes once, at the
@@ -43,8 +43,8 @@ func (c *fakeCounter) Destroy() error { c.destroyed = true; return nil }
 // options the CLI passed.
 type fakeTPM struct {
 	ctr        *fakeCounter
-	created    []tpmcounter.Options
-	opened     []tpmcounter.Options
+	created    []nvcounter.Options
+	opened     []nvcounter.Options
 	createErr  error
 	openErr    error
 	failIncAt1 bool
@@ -75,7 +75,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 	f := &fakeTPM{}
 	sc, so, sr := createCounter, openCounter, removeCounter
 	t.Cleanup(func() { createCounter, openCounter, removeCounter = sc, so, sr })
-	removeCounter = func(o tpmcounter.Options) (bool, error) {
+	removeCounter = func(o nvcounter.Options) (bool, error) {
 		f.removed = append(f.removed, o.Handle)
 		if f.removeErr != nil {
 			return false, f.removeErr
@@ -86,7 +86,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 		}
 		return false, nil
 	}
-	createCounter = func(o tpmcounter.Options) (tpmCounter, error) {
+	createCounter = func(o nvcounter.Options) (tpmCounter, error) {
 		o.Auth, o.OwnerAuth, o.EndorsementAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...), append([]byte(nil), o.EndorsementAuth...) // the CLI wipes its copies
 		f.created = append(f.created, o)
 		if f.createErr != nil {
@@ -105,7 +105,7 @@ func installFakeTPM(t *testing.T) *fakeTPM {
 		}
 		return f.seen(), nil
 	}
-	openCounter = func(o tpmcounter.Options) (theca.Counter, error) {
+	openCounter = func(o nvcounter.Options) (theca.Counter, error) {
 		o.Auth, o.OwnerAuth, o.EndorsementAuth = append([]byte(nil), o.Auth...), append([]byte(nil), o.OwnerAuth...), append([]byte(nil), o.EndorsementAuth...)
 		f.opened = append(f.opened, o)
 		if f.openErr != nil {
@@ -206,8 +206,8 @@ func TestCounterTPMErrors(t *testing.T) {
 			t.Fatalf("%s left a container behind", c.name)
 		}
 	}
-	f.createErr = tpmcounter.ErrUnsupported
-	if r := create("--counter", "tpm"); !errors.Is(r.e, tpmcounter.ErrUnsupported) {
+	f.createErr = nvcounter.ErrUnsupported
+	if r := create("--counter", "tpm"); !errors.Is(r.e, nvcounter.ErrUnsupported) {
 		t.Fatalf("no TPM: %v", r.e)
 	}
 	f.createErr = nil
@@ -224,8 +224,8 @@ func TestCounterTPMErrors(t *testing.T) {
 		t.Fatal(r.e)
 	}
 	// Opening: the TPM is unreachable, or the credentials are unreadable.
-	f.openErr = tpmcounter.ErrNotCounter
-	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm"); !errors.Is(r.e, tpmcounter.ErrNotCounter) {
+	f.openErr = nvcounter.ErrNotCounter
+	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm"); !errors.Is(r.e, nvcounter.ErrNotCounter) {
 		t.Fatalf("open: %v", r.e)
 	}
 	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", filepath.Join(dir, "none")); r.e == nil {
@@ -252,12 +252,12 @@ func TestCounterRebind(t *testing.T) {
 	}
 
 	// The index is gone (undefined, or the TPM was cleared).
-	f.openErr = tpmcounter.ErrNoCounter
-	if r := info(); !errors.Is(r.e, tpmcounter.ErrNoCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
+	f.openErr = nvcounter.ErrNoCounter
+	if r := info(); !errors.Is(r.e, nvcounter.ErrNoCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
 		t.Fatalf("refusal after the counter was deleted: %v", r.e)
 	}
 	// --accept-rollback is not the way back (it needs a counter to compare).
-	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--accept-rollback"); !errors.Is(r.e, tpmcounter.ErrNoCounter) {
+	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--accept-rollback"); !errors.Is(r.e, nvcounter.ErrNoCounter) {
 		t.Fatalf("accept-rollback with no counter: %v", r.e)
 	}
 	// A counter that is there but is not the recorded one: the same sentence.
@@ -267,7 +267,7 @@ func TestCounterRebind(t *testing.T) {
 	if r := info(); !errors.Is(r.e, theca.ErrCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
 		t.Fatalf("another counter at the handle: %v", r.e)
 	}
-	f.openErr = tpmcounter.ErrNotCounter
+	f.openErr = nvcounter.ErrNotCounter
 	if r := info(); !strings.Contains(r.e.Error(), "counter rebind") {
 		t.Fatalf("not a counter: %v", r.e)
 	}
@@ -324,8 +324,8 @@ func TestCounterRebind(t *testing.T) {
 	}
 	f.failHandle = 0
 	// The new counter cannot be made at all.
-	f.createErr = tpmcounter.ErrUnsupported
-	if r := rb(); !errors.Is(r.e, tpmcounter.ErrUnsupported) {
+	f.createErr = nvcounter.ErrUnsupported
+	if r := rb(); !errors.Is(r.e, nvcounter.ErrUnsupported) {
 		t.Fatalf("no TPM: %v", r.e)
 	}
 	f.createErr = nil
@@ -372,14 +372,14 @@ func TestCounterTPMSwtpmRecovery(t *testing.T) {
 		t.Fatal(r.e)
 	}
 	// Delete the index, as the owner can.
-	c, err := tpmcounter.Open(tpmcounter.Options{Device: dev, Handle: 0x01500000})
+	c, err := nvcounter.Open(nvcounter.Options{Device: dev, Handle: 0x01500000})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Destroy(); err != nil {
 		t.Fatal(err)
 	}
-	if r := run(nil, append([]string{"info", path}, flags(dev)...)...); !errors.Is(r.e, tpmcounter.ErrNoCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
+	if r := run(nil, append([]string{"info", path}, flags(dev)...)...); !errors.Is(r.e, nvcounter.ErrNoCounter) || !strings.Contains(r.e.Error(), "counter rebind") {
 		t.Fatalf("after the index was deleted: %v", r.e)
 	}
 	r := run(nil, append([]string{"counter", "rebind", path}, flags(dev)...)...)
@@ -406,7 +406,7 @@ func TestCounterTPMSwtpmRecovery(t *testing.T) {
 	if err := os.WriteFile(path, older, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if r := run(nil, append([]string{"info", path}, flags(other)...)...); !errors.Is(r.e, tpmcounter.ErrNoCounter) {
+	if r := run(nil, append([]string{"info", path}, flags(other)...)...); !errors.Is(r.e, nvcounter.ErrNoCounter) {
 		t.Fatalf("on another TPM: %v", r.e)
 	}
 	if r := run(nil, append([]string{"counter", "rebind", path}, flags(other)...)...); r.e != nil {
@@ -419,7 +419,7 @@ func TestCounterTPMSwtpmRecovery(t *testing.T) {
 
 // The real constructors report a TPM that cannot be reached.
 func TestRealCounterConstructorsRefuse(t *testing.T) {
-	o := tpmcounter.Options{Device: filepath.Join(t.TempDir(), "no-such-device"), Handle: 1}
+	o := nvcounter.Options{Device: filepath.Join(t.TempDir(), "no-such-device"), Handle: 1}
 	if c, err := createCounter(o); err == nil || c != nil {
 		t.Fatalf("create: %v %v", c, err)
 	}
@@ -469,7 +469,7 @@ func TestCounterTPMSwtpmRebindOfAHealthyCounter(t *testing.T) {
 	}
 }
 
-// The real tpmcounter behind the flags, on a software TPM.
+// The real nvcounter behind the flags, on a software TPM.
 func TestCounterTPMSwtpm(t *testing.T) {
 	dev := startSwtpmDevice(t)
 	dir := t.TempDir()

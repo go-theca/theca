@@ -476,8 +476,9 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tp
 
   The counter index has `NO_DA`: a wrong authValue file does not count
   towards the TPM's lockout.
-- Library: `tpmcounter.Create`, `tpmcounter.Open`, `tpmcounter.Counter.Identity`
-  (`theca.IdentifiedCounter`), `OpenOptions.CounterFor`, `OpenOptions.RebindFor`.
+- Library: [`go-tpm2/nvcounter`](https://github.com/go-tpm2/nvcounter) (`nvcounter.Create`,
+  `nvcounter.Open`, `nvcounter.Counter.Identity`, a `theca.IdentifiedCounter`; it was theca's
+  `tpmcounter` package until v0.30.0), `OpenOptions.CounterFor`, `OpenOptions.RebindFor`.
   Built on go-tpm2/tpm2 v0.11.0 `NVDefineCounter`, `NVIncrementAuth`,
   `NVReadCounter`, `EKIdentity`. Counters defined by v0.9.0 (without `NO_DA`) are
   still recognized. One counter per container.

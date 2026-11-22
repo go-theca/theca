@@ -12,7 +12,7 @@ import (
 	"github.com/go-tpm2/tpm2"
 
 	"github.com/go-theca/theca"
-	"github.com/go-theca/theca/tpmcounter"
+	"github.com/go-tpm2/nvcounter"
 )
 
 // The secret-manager flags of the counter reach the TPM; the counter's
@@ -107,7 +107,7 @@ func TestTPMManagerFlagsAndDerivedAuth(t *testing.T) {
 		}
 	}
 	// A refusal made nothing.
-	if _, err := tpmcounter.Open(tpmcounter.Options{Device: filepath.Join(dir, "none"), Handle: 1}); err == nil {
+	if _, err := nvcounter.Open(nvcounter.Options{Device: filepath.Join(dir, "none"), Handle: 1}); err == nil {
 		t.Fatal("control: the real constructor reached a device")
 	}
 }
@@ -121,8 +121,8 @@ func TestExplicitAuthCreateFailures(t *testing.T) {
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
 	path := filepath.Join(dir, "c.theca")
 	args := []string{"create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", "keychain:t/ix"}
-	f.createErr = tpmcounter.ErrUnsupported
-	if r := run(nil, args...); !errors.Is(r.e, tpmcounter.ErrUnsupported) {
+	f.createErr = nvcounter.ErrUnsupported
+	if r := run(nil, args...); !errors.Is(r.e, nvcounter.ErrUnsupported) {
 		t.Fatalf("no TPM: %v", r.e)
 	}
 	f.createErr = nil
@@ -136,8 +136,8 @@ func TestExplicitAuthCreateFailures(t *testing.T) {
 	if r := run(nil, derived...); r.e == nil || !f.ctr.destroyed {
 		t.Fatalf("failed create, derived: %v", r.e)
 	}
-	f.createErr = tpmcounter.ErrUnsupported
-	if r := run(nil, derived...); !errors.Is(r.e, tpmcounter.ErrUnsupported) {
+	f.createErr = nvcounter.ErrUnsupported
+	if r := run(nil, derived...); !errors.Is(r.e, nvcounter.ErrUnsupported) {
 		t.Fatalf("derived, no TPM: %v", r.e)
 	}
 }
@@ -152,11 +152,11 @@ func TestEndorsementAuthRefusalNamesTheFlag(t *testing.T) {
 	if r := run(nil, "create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm"); r.e != nil {
 		t.Fatal(r.e)
 	}
-	refusal := errors.Join(tpmcounter.ErrIdentity, tpmcounter.ErrEndorsementAuth)
+	refusal := errors.Join(nvcounter.ErrIdentity, nvcounter.ErrEndorsementAuth)
 	want := []string{"--tpm-endorsement-auth-from", "dictionary-attack lockout", "19.8.1"}
 	check := func(what string, r result) {
 		t.Helper()
-		if !errors.Is(r.e, tpmcounter.ErrEndorsementAuth) {
+		if !errors.Is(r.e, nvcounter.ErrEndorsementAuth) {
 			t.Fatalf("%s: %v", what, r.e)
 		}
 		for _, w := range want {
@@ -225,7 +225,7 @@ func TestEndorsementAuthSwtpm(t *testing.T) {
 	// wrong one, the mount is refused and says why.
 	for name, args := range map[string][]string{"none": base, "wrong": withEK("keychain:t/wrong")} {
 		r := run(nil, append([]string{"info", path}, args...)...)
-		if !errors.Is(r.e, tpmcounter.ErrEndorsementAuth) || !errors.Is(r.e, theca.ErrCounterIdentity) ||
+		if !errors.Is(r.e, nvcounter.ErrEndorsementAuth) || !errors.Is(r.e, theca.ErrCounterIdentity) ||
 			!strings.Contains(r.e.Error(), "--tpm-endorsement-auth-from") {
 			t.Fatalf("%s: %v", name, r.e)
 		}
@@ -238,7 +238,7 @@ func TestEndorsementAuthSwtpm(t *testing.T) {
 		}
 	}
 	// Rebind needs it too, and pins the same TPM again.
-	if r := run(nil, append([]string{"counter", "rebind", path}, base...)...); !errors.Is(r.e, tpmcounter.ErrEndorsementAuth) {
+	if r := run(nil, append([]string{"counter", "rebind", path}, base...)...); !errors.Is(r.e, nvcounter.ErrEndorsementAuth) {
 		t.Fatalf("rebind without it: %v", r.e)
 	}
 	r := run(nil, append([]string{"counter", "rebind", path}, withEK("keychain:t/ek")...)...)
@@ -253,7 +253,7 @@ func TestEndorsementAuthSwtpm(t *testing.T) {
 	if r := run(nil, append([]string{"create", p2, "--size", "1M"}, withEK("keychain:t/ek")...)...); r.e != nil {
 		t.Fatalf("create under the password: %v %q", r.e, r.err)
 	}
-	if r := run(nil, append([]string{"create", filepath.Join(dir, "e.theca"), "--size", "1M"}, base...)...); !errors.Is(r.e, tpmcounter.ErrEndorsementAuth) {
+	if r := run(nil, append([]string{"create", filepath.Join(dir, "e.theca"), "--size", "1M"}, base...)...); !errors.Is(r.e, nvcounter.ErrEndorsementAuth) {
 		t.Fatalf("create without it: %v", r.e)
 	}
 	// None of the refusals was an authorization failure that counts (TCG Part 1
