@@ -1,3 +1,5 @@
+github.com/go-authn/harden v0.3.0 h1:KripIm2WdN0gUfwuw7N16i93zDe59w59fhmo80eCMt4=
+github.com/go-authn/harden v0.3.0/go.mod h1:sceLxhnMHtExHEp9bU8XHKCw2fp+WFjh6Ri6Yxu2aVA=
 github.com/go-encryptions/argon2 v0.1.0 h1:yBY2J+iy8ySMwnAFe4phqx9horyqzbWu2VuPOtpLDwk=
 github.com/go-encryptions/argon2 v0.1.0/go.mod h1:Ow9whh1fllz67dc33JWcDIklhBhAObqll0gBMFTSKeg=
 github.com/go-encryptions/ctr v0.1.1 h1:UAvH45xiG9ifBTt4mE5PNrHWnTY5kBVZ4OyThBPr/94=
