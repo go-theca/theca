@@ -65,6 +65,8 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `profile.Store.Remove`: a `Load` and a `Save`.
 - `profile.Store.List`: a `Load` and a sort of at most 256 names.
 - `session.SocketPath`: a path join and length check.
+- `session.PipePath`: a string concatenation and length check (the Windows counterpart of `SocketPath`).
+- `session.ReadyFile`: wraps one inherited handle or descriptor, once per daemon start.
 - `session.DecodeRequest`: one line of at most 4096 bytes on a local socket, once per `close` or `status`.
 - `session.DecodeResponse`: one line of at most 4096 bytes, once per `open`, `close` or `status`.
 - `session.Report`: writes one line of at most 4096 bytes.

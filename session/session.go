@@ -6,6 +6,10 @@
 // kernel who is on the other end (SO_PEERCRED, LOCAL_PEERCRED) and refuses any
 // user but its own. A message is one JSON line of at most MaxMessage bytes, with
 // no unknown field; a longer one is refused without being read to its end.
+// On Windows the channel is a named pipe, \\.\pipe\theca-SID-NAME, whose
+// security descriptor grants access to the user's SID alone and refuses remote
+// clients; the server also compares the SID of the client's process with its
+// own (pipe_windows.go, pipesid.go).
 // Nothing secret crosses it: a request is an operation name, a response says
 // where the share is mounted.
 package session
@@ -18,8 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -135,50 +137,19 @@ func encode(w io.Writer, v any) error {
 	return err
 }
 
-// ---- where the socket is ----
-
-// Seams the tests replace.
-var (
-	runtimeDir    = func() string { return os.Getenv("XDG_RUNTIME_DIR") }
-	userConfigDir = os.UserConfigDir
-)
-
-// maxSocketPath is the shortest sun_path limit among the systems served
-// (macOS: 104, with the terminating NUL).
-const maxSocketPath = 103
-
-// SocketPath is where the session of profile name listens:
-// $XDG_RUNTIME_DIR/theca/NAME.sock, else os.UserConfigDir()/theca/run/NAME.sock.
-func SocketPath(name string) (string, error) {
+// checkName refuses a profile name that could leave the directory (or the pipe
+// namespace) the endpoint lives in. SocketPath (path_unix.go, path_windows.go)
+// is where the session of profile name listens.
+func checkName(name string) error {
 	if name == "" || strings.ContainsAny(name, "/\\\x00") || name == "." || name == ".." {
-		return "", fmt.Errorf("session: bad name %q", clip(name, 32))
+		return fmt.Errorf("session: bad name %q", clip(name, 32))
 	}
-	var dir string
-	if r := runtimeDir(); r != "" {
-		dir = filepath.Join(r, "theca")
-	} else {
-		c, err := userConfigDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(c, "theca", "run")
-	}
-	p := filepath.Join(dir, name+".sock")
-	if len(p) > maxSocketPath {
-		return "", fmt.Errorf("session: socket path %s is longer than %d bytes (set XDG_RUNTIME_DIR to a shorter directory)", p, maxSocketPath)
-	}
-	return p, nil
+	return nil
 }
 
 // ---- server ----
 
-// peerUID returns the user ID on the other end of c; replaced by tests, and
-// by platform files. It lives in peer_*.go.
-var peerUID = peerUIDOf
-
-var getuid = os.Getuid
-
-// Server answers on a Unix socket.
+// Server answers on a Unix socket, or on a named pipe on Windows.
 type Server struct {
 	l    net.Listener
 	path string
@@ -192,18 +163,7 @@ type Server struct {
 // Listen creates the socket. A socket another process answers on is
 // ErrAlreadyOpen; one nobody answers on is a leftover and is replaced.
 func Listen(path string) (*Server, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
-		c.Close()
-		return nil, ErrAlreadyOpen
-	}
-	os.Remove(path) // a leftover, or nothing
-	l, err := listenUnix(path)
+	l, err := listenEndpoint(path)
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +206,7 @@ var closeTimeout = 2 * time.Minute
 
 func (s *Server) handle(c net.Conn, h Handler) {
 	c.SetReadDeadline(time.Now().Add(ioTimeout))
-	uid, err := peerUID(c)
-	if err != nil || uid != getuid() {
+	if authorize(c) != nil {
 		encode(c, Response{Error: ErrPeer.Error()})
 		return
 	}
@@ -279,17 +238,16 @@ func (s *Server) Shutdown() {
 		s.mu.Unlock()
 		s.l.Close()
 		s.wg.Wait()
-		os.Remove(s.path)
+		removeEndpoint(s.path)
 	})
 }
 
 // ---- client ----
 
 func call(ctx context.Context, path string, op string, wait time.Duration) (Response, error) {
-	var d net.Dialer
 	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
-	c, err := d.DialContext(ctx, "unix", path)
+	c, err := dialEndpoint(ctx, path)
 	if err != nil {
 		return Response{}, ErrNotOpen
 	}
