@@ -31,6 +31,8 @@ type memFile struct {
 	writes    int
 	failAfter int // -1: never
 	syncFail  bool
+	syncs     int // Sync calls so far
+	syncCut   int // from the syncCut-th Sync on (1-based) every Sync fails; 0: never
 }
 
 func newMem(n int) *memFile { return &memFile{b: make([]byte, n), failAfter: -1} }
@@ -60,7 +62,8 @@ func (m *memFile) WriteAt(p []byte, off int64) (int, error) {
 }
 
 func (m *memFile) Sync() error {
-	if m.syncFail {
+	m.syncs++
+	if m.syncFail || (m.syncCut > 0 && m.syncs >= m.syncCut) {
 		return errCut
 	}
 	return nil

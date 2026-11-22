@@ -5,7 +5,8 @@ Read by `refbench` in its CI mode (`cd bench && go test -run TestPerf .`). Every
 - `Create`: Argon2id (the `PasswordFactor` case), then one pass of ChaCha20 filler over the file, then the slot seals. There is no C program that formats a Theca container to compare against.
 - `Open`: Argon2id (the `PasswordFactor` case) plus 16 slot trial-opens of 2 KiB each. No C counterpart.
 - `Container.Verify`: one `Sector/Open` per written sector plus the tree walk. Its per-sector cost is the `Sector/Open` row.
-- `Container.Sync`: the journal commit, i.e. sealed records, two flushes and a header seal. It is bounded by the backing's flush latency, not by computation, and there is no C counterpart.
+- `Container.Sync`: the journal commit, i.e. sealed records, four flushes and a header seal. It is bounded by the backing's flush latency, not by computation, and there is no C counterpart.
+- `DefaultJournal`: one clamp of an integer, once per `Create`.
 - `Container.Close`: `Sync`, then the keys are wiped.
 - `Container.AddSlot`: one slot seal (2 KiB, TA1) and a commit. Rare and interactive.
 - `Container.RemoveSlot`: one 2 KiB random write and a commit. Rare and interactive.

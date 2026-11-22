@@ -31,8 +31,26 @@ import (
 // SectorSize is the logical sector size.
 const SectorSize = ta1.SectorSize
 
-// DefaultJournalEntries is used when CreateOptions leaves it zero.
+// DefaultJournalEntries is the smallest default journal, used when
+// CreateOptions leaves JournalEntries zero for a small container.
 const DefaultJournalEntries = 64
+
+// MaxDefaultJournalEntries caps the default journal: 4096 entries are 17 MiB
+// on disk and at most 16 MiB of pending sectors in memory.
+const MaxDefaultJournalEntries = 4096
+
+// DefaultJournal is the journal size Create uses for a container of that many
+// sectors when JournalEntries is zero: one entry per 16 sectors (6.25 % of
+// the data, clamped to [DefaultJournalEntries, MaxDefaultJournalEntries]).
+//
+// The journal bounds a transaction, and every transaction costs about four
+// flushes whatever its size (go-theca/theca#73): a bigger journal is fewer
+// flushes per byte written. A 64-entry journal measured 11.7 MiB/s for 64 MiB
+// on macOS (F_FULLFSYNC), a 1024-entry one 94 MiB/s. The size is fixed at
+// creation: an existing container keeps its own.
+func DefaultJournal(sectors uint64) uint32 {
+	return uint32(min(max(sectors/16, DefaultJournalEntries), MaxDefaultJournalEntries))
+}
 
 // Errors.
 var (
@@ -216,7 +234,7 @@ const (
 // CreateOptions configures Create.
 type CreateOptions struct {
 	Sectors        uint64
-	JournalEntries uint32 // 0: DefaultJournalEntries (raised to the minimum)
+	JournalEntries uint32 // 0: DefaultJournal(Sectors) (raised to the minimum)
 	Hint           int    // Argon2id profile (D2)
 	Password       []byte
 	Policy         Policy
@@ -381,7 +399,7 @@ func Create(f Backing, o CreateOptions) (c *Container, printed string, err error
 	rng := randOr(o.Rand)
 	jn := o.JournalEntries
 	if jn == 0 {
-		jn = DefaultJournalEntries
+		jn = DefaultJournal(o.Sectors)
 	}
 	shape, err := merkle.NewShape(max(o.Sectors, 1))
 	if err != nil || o.Sectors == 0 {
