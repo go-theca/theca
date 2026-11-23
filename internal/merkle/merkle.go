@@ -8,7 +8,7 @@
 package merkle
 
 import (
-	"crypto/hmac"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"github.com/go-theca/theca/internal/lru"
@@ -190,7 +190,7 @@ func (t *Tree) node(level int, idx uint64) (*[NodeSize]byte, error) {
 		if len(raw) != NodeSize {
 			return nil, fmt.Errorf("%w: level %d node %d has %d bytes", ErrTamper, level, idx, len(raw))
 		}
-		if got := nodeValue(t.k, level, raw); !hmac.Equal(got[:], want[:]) {
+		if got := nodeValue(t.k, level, raw); subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
 			return nil, fmt.Errorf("%w: level %d node %d", ErrTamper, level, idx)
 		}
 		copy(n[:], raw)

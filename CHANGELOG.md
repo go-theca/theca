@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.1
+
+- HMAC-SHA-256 now comes from `github.com/go-encryptions/hmac` v0.1.0 (byte-identical to
+  `crypto/hmac`, RFC 4231 vectors unchanged) instead of the standard library, so the keyed inner and
+  outer states can be wiped: `Keys.Zeroize` (called by `Close`) and a rebuild after a key change
+  now wipe them. Tag comparisons use `crypto/subtle.ConstantTimeCompare`. Refs #74 item 4.
+
 ## v0.32.0
 
 - The macOS lock/sleep detection moved out of theca: `internal/lockwatch`'s darwin half is now

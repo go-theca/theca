@@ -11,6 +11,7 @@ require (
 	github.com/go-authn/secretsource v0.8.0
 	github.com/go-encryptions/argon2 v0.1.0
 	github.com/go-encryptions/ctr v0.1.1
+	github.com/go-encryptions/hmac v0.1.0
 	github.com/go-fileshare/automount v0.1.1
 	github.com/go-filesystems/exfat v0.7.0
 	github.com/go-filesystems/smb v0.17.2

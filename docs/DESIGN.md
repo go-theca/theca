@@ -888,7 +888,7 @@ from one version, suite or purpose is never valid in another.
 |---|---|---|
 | XChaCha20 keystream | `golang.org/x/crypto/chacha20` | libsodium `crypto_stream_xchacha20`; OpenSSL `speed -evp chacha20` |
 | AES-256-CTR | `go-encryptions/ctr` (round keys expanded once) | OpenSSL `speed -evp aes-256-ctr` |
-| HMAC-SHA-256 | Go `crypto/hmac` + `crypto/sha256` | OpenSSL `speed -hmac sha256`; libsodium `crypto_auth_hmacsha256` |
+| HMAC-SHA-256 | `go-encryptions/hmac` + `crypto/sha256` (was `crypto/hmac`) | OpenSSL `speed -hmac sha256`; libsodium `crypto_auth_hmacsha256` |
 | Argon2id (t=1, p=4, 2 GiB; one thread) | `go-encryptions/argon2` | P-H-C `phc-winner-argon2` reference CLI, threads=1 |
 | Composite Theca-A per 4 KiB sector | ours | Sum of the three primitives' costs + ≤ 5%; and VeraCrypt AES-Twofish-Serpent XTS (go-fde/veracrypt) as the competitor |
 | (later) HCTR2 | to port | google/hctr2 benchmarks; Linux `hctr2` |
@@ -962,9 +962,9 @@ from one version, suite or purpose is never valid in another.
   library and cannot be cleared (#74), the
   by-value `[32]byte` KEKs returned by `kdf.KEK`/`kdf.Pair` (their stack copies
   are not addressable from Go; every heap slice and struct field that holds one
-  is cleared), and the pads `crypto/hmac` keeps in its hash states (a local
-  HMAC-SHA-256 with a wipe was not adopted: it would have to match the
-  standard library's speed, which was not measured at load average ~29).
+  is cleared). The HMAC pads are no longer in this list: the keyed states live
+  in a `go-encryptions/hmac` `MAC`, wiped by `Keys.Zeroize` (so by `Close`).
+  Its speed against `crypto/hmac` is in the PR that adopted it.
 - **Failure modes**: wrong password and corrupted container produce the
   same error up to the slot stage (no oracle). After unlock, a tag failure is
   an I/O error naming the sector, never silently zero data.

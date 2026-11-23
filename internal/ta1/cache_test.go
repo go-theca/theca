@@ -91,6 +91,40 @@ func TestCacheConcurrentUse(t *testing.T) {
 	wg.Wait()
 }
 
+// mustPanic reports whether f panics.
+func mustPanic(f func()) (panicked bool) {
+	defer func() { panicked = recover() != nil }()
+	f()
+	return false
+}
+
+// Zeroize wipes the keyed HMAC states (go-theca/theca#74 item 4): the MAC
+// the cache held is unusable afterwards.
+func TestZeroizeWipesTheMAC(t *testing.T) {
+	k := testKeys(t)
+	k.MAC(LabelNode, []byte("x"))
+	m := k.c.mac
+	k.Zeroize()
+	if !mustPanic(func() { m.Write([]byte("x")) }) {
+		t.Fatal("Zeroize left the HMAC state usable: it was not wiped")
+	}
+}
+
+// A changed Km rebuilds the MAC and wipes the one it replaces.
+func TestRebuildWipesTheOldMAC(t *testing.T) {
+	k := testKeys(t)
+	k.MAC(LabelNode, []byte("x"))
+	old := k.c.mac
+	k.Km[0] ^= 1
+	k.MAC(LabelNode, []byte("x"))
+	if k.c.mac == old {
+		t.Fatal("MAC not rebuilt")
+	}
+	if !mustPanic(func() { old.Reset() }) {
+		t.Fatal("the replaced HMAC state was not wiped")
+	}
+}
+
 func TestZeroizeDropsTheCache(t *testing.T) {
 	k := testKeys(t)
 	k.MAC(LabelNode, []byte("x")) // build it

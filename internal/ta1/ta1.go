@@ -7,18 +7,18 @@
 package ta1
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"sync"
 	"unsafe"
 
 	"github.com/go-authn/harden/memlock"
 	"github.com/go-encryptions/ctr"
+	"github.com/go-encryptions/hmac"
 	"github.com/go-theca/theca/internal/pin"
 	"golang.org/x/crypto/chacha20"
 )
@@ -95,14 +95,14 @@ func (k *Keys) pin() error {
 // and a copy whose key is then changed shares the pointer.
 //
 // The AES round keys live in a go-encryptions/ctr Cipher, which Zeroize wipes.
-// The HMAC pads live inside crypto/hmac and cannot be wiped; Zeroize drops them
-// for the GC. Before this cache, every sector left one more such copy behind.
+// The keyed HMAC states live in a go-encryptions/hmac MAC, which Zeroize wipes.
+// Before this cache, every sector left one more copy of the pads behind.
 type cache struct {
 	mu    sync.Mutex
 	ka    [KeySize]byte
 	km    [KeySize]byte
 	block *ctr.Cipher
-	mac   hash.Hash
+	mac   *hmac.MAC
 	buf   [64]byte // tag header scratch: label, cid, index, seed
 }
 
@@ -124,6 +124,9 @@ func (k *Keys) state() *cache {
 		c.ka = k.Ka
 	}
 	if c.mac == nil || c.km != k.Km {
+		if c.mac != nil {
+			c.mac.Wipe()
+		}
 		c.mac = hmac.New(sha256.New, k.Km[:])
 		c.km = k.Km
 	}
@@ -183,6 +186,9 @@ func (k *Keys) Zeroize() {
 		clear(c.buf[:])
 		if c.block != nil {
 			c.block.Zeroize() // the AES round keys are ours to wipe
+		}
+		if c.mac != nil {
+			c.mac.Wipe() // the keyed HMAC states are ours to wipe too
 		}
 		c.block, c.mac = nil, nil
 		c.mu.Unlock()
@@ -332,7 +338,7 @@ func (k *Keys) SealSector(cid *[16]byte, idx uint64, dst, plain []byte, rng io.R
 // OpenSector verifies the tag first, then decrypts ct into dst.
 func (k *Keys) OpenSector(cid *[16]byte, idx uint64, dst, ct []byte, seed *[SeedSize]byte, tag *[SectorTagSize]byte) error {
 	want := k.SectorTag(cid, idx, seed, ct)
-	if !hmac.Equal(want[:], tag[:]) {
+	if subtle.ConstantTimeCompare(want[:], tag[:]) != 1 {
 		return ErrAuth
 	}
 	return k.Cascade(dst, ct, seed)
@@ -377,7 +383,7 @@ func (k *Keys) Open(label string, ad, blob []byte) ([]byte, error) {
 	seed := (*[SeedSize]byte)(blob[:SeedSize])
 	ct := blob[SeedSize : SeedSize+n]
 	want := k.sealTag(label, ad, seed[:], ct)
-	if !hmac.Equal(want[:], blob[SeedSize+n:]) {
+	if subtle.ConstantTimeCompare(want[:], blob[SeedSize+n:]) != 1 {
 		return nil, ErrAuth
 	}
 	pt := make([]byte, n)

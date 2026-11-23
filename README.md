@@ -507,9 +507,10 @@ daemon. What `theca` does about it, and what it does not:
   go-theca/theca#74). The transient key-encryption keys: where they live in a heap slice or in a
   field of a value we own they are cleared, but a `[32]byte` returned by value
   (`kdf.KEK`, `kdf.Pair`) is copied through registers and stack frames, and Go
-  cannot address or clear a stack slot it has already moved or left. The pads
-  `crypto/hmac` keeps inside its hash states (we use the standard library's, so
-  there is no handle to clear them).
+  cannot address or clear a stack slot it has already moved or left. (The pads
+  of the HMAC are not in this list: they live in a
+  [go-encryptions/hmac](https://github.com/go-encryptions/hmac) `MAC`, which
+  `Close` wipes.)
 - **Not swapped.** The pages that hold the master secret, the slot wrap keys and
   their cipher caches are `mlock`ed (a per-page count, because `munlock` of a
   page undoes every `mlock` of it). `--mlock=auto` (the default) tries and says
@@ -518,7 +519,7 @@ daemon. What `theca` does about it, and what it does not:
   [go-authn/harden/memlock](https://github.com/go-authn/harden): `mlock` on
   Linux and the BSDs, and, since v0.31.0, `VirtualLock` on Windows (which
   counts against the process's minimum working set). The copies
-  listed above (the fallback's round keys, stack KEKs, `crypto/hmac` pads) are
+  listed above (the fallback's round keys, stack KEKs) are
   **not** pinned.
 - **No core file, no debugger.** `theca _serve`, the daemon, sets
   `RLIMIT_CORE` to 0 and, on Linux, `PR_SET_DUMPABLE` to 0 (no core file whatever
