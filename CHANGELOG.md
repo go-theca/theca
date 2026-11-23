@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.32.1
 
 - HMAC-SHA-256 now comes from `github.com/go-encryptions/hmac` v0.1.0 (byte-identical to
   `crypto/hmac`, RFC 4231 vectors unchanged) instead of the standard library, so the keyed inner and
