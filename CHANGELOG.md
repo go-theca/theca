@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.33.0
+
+- **Breaking: `--tpm-auth-file` and `--tpm-owner-auth-file` are removed** (go-theca/theca#55,
+  deprecated since v0.21.0). Passing one is refused with a message that says what replaces it.
+  `--password-file`, `--recovery-file` and `--pin-file` stay (separate decision).
+- **Nobody is locked out.** A counter made by an older theca with its authValue in a file is now
+  refused by the TPM when opened; the error says "the TPM refused the counter's authValue" and
+  names the migration: `theca counter rebind FILE --counter tpm`, with the factors that open the
+  container, no `--tpm-auth-*` flag, and `--tpm-owner-auth-from REF` if the TPM has an owner
+  password. It needs neither the old file nor the old value (it deletes the old counter with the
+  owner password, and derives the new authValue from the container's master key); tested on a
+  software TPM. Or give the old value from a secret manager with `--tpm-auth-from REF`.
+- `--tpm-owner-auth-file` becomes `--tpm-owner-auth-from REF` (keychain:, secretservice:,
+  keepassxc:); a TPM with an empty owner password needs no flag.
+- `readSecretFile` keeps its mode 0600 check (the other file flags still use it).
+
 ## v0.32.1
 
 - HMAC-SHA-256 now comes from `github.com/go-encryptions/hmac` v0.1.0 (byte-identical to

@@ -20,8 +20,6 @@ func TestFileFlagsWarn(t *testing.T) {
 	for _, tc := range []struct{ flag, from string }{
 		{"--password-file", "--password-from"},
 		{"--recovery-file", "--recovery-from"},
-		{"--tpm-auth-file", "--tpm-auth-from"},
-		{"--tpm-owner-auth-file", "--tpm-owner-auth-from"},
 	} {
 		r := run(nil, "info", path, "--password-file", pw, tc.flag, pw)
 		want := "Flag " + tc.flag + " is deprecated: a secret file beside the container's other factors defeats them; use " + tc.from + " with keychain:, secretservice: or keepassxc:\n"
@@ -49,7 +47,7 @@ func TestFileFlagsHiddenFromHelp(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"--password-file", "--recovery-file", "--tpm-auth-file", "--tpm-owner-auth-file"} {
+	for _, f := range []string{"--password-file", "--recovery-file"} {
 		if strings.Contains(out.String(), f) {
 			t.Errorf("%s is listed in the help", f)
 		}

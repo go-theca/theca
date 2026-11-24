@@ -15,8 +15,8 @@ func TestCLITPMIdentity(t *testing.T) {
 	f := installFakeTPM(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
-	owner := secretFile(t, dir, "owner", "owner secret\n", 0o600)
-	flags := []string{"--password-file", pw, "--counter", "tpm", "--tpm-owner-auth-file", owner}
+	manager(t, map[string]string{"keychain:t/owner": "owner secret"})
+	flags := []string{"--password-file", pw, "--counter", "tpm", "--tpm-owner-auth-from", "keychain:t/owner"}
 
 	// A container made now is pinned, and says so at create and at info.
 	f.tpmID = bytes.Repeat([]byte{0x11}, 32)
@@ -83,9 +83,9 @@ func TestCLISwtpmAnotherTPMIsRefused(t *testing.T) {
 	path := filepath.Join(dir, "c.theca")
 	// The counter's authValue is given (not derived), so the test can read it
 	// from outside, as the attacker would have to.
-	ix := secretFile(t, dir, "ix", "index secret\n", 0o600)
+	manager(t, map[string]string{"keychain:t/ix": "index secret"})
 	flags := func(d string) []string {
-		return []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", d, "--tpm-auth-file", ix}
+		return []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", d, "--tpm-auth-from", "keychain:t/ix"}
 	}
 	if r := run(nil, append([]string{"create", path, "--size", "1M"}, flags(devA)...)...); r.e != nil || !strings.Contains(r.err, "counter TPM identity: ") {
 		t.Fatalf("create: %v %q", r.e, r.err)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-theca/theca"
 	"github.com/go-tpm2/nvcounter"
+	"github.com/go-tpm2/tpm2"
 )
 
 // tpmCounter is a counter that can also be deleted again.
@@ -56,9 +57,7 @@ type tpmFlags struct {
 	counter             string
 	device              string
 	handle              uint32
-	authFile            string
 	authFrom            string
-	ownerAuthFile       string
 	ownerAuthFrom       string
 	endorsementAuthFrom string
 	acceptRollback      bool
@@ -71,22 +70,37 @@ func (f *tpmFlags) flags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.counter, "counter", "", "rollback counter: tpm (a TPM 2.0 NV counter) or empty for none; create makes one, the other commands must be given it again")
 	cmd.Flags().StringVar(&f.device, "tpm-device", "", "TPM device: a path, or unix:SOCKET for a software TPM (default /dev/tpmrm0 on Linux, tbs: on Windows)")
 	cmd.Flags().Uint32Var(&f.handle, "tpm-handle", 0, "create: NV index of the new counter (0: the first free one from 0x01500000)")
-	cmd.Flags().StringVar(&f.authFile, "tpm-auth-file", "", "file holding the counter's authValue, at most 32 bytes (mode 0600 or stricter); DEPRECATED, see --tpm-auth-from. With neither flag, a NEW counter's authValue is derived from the container's master key (nothing to store); a counter made earlier with a stored authValue needs its flag at every mount")
-	cmd.Flags().StringVar(&f.authFrom, "tpm-auth-from", "", "the counter's authValue, at most 32 bytes,"+tpmFromHelp)
-	cmd.Flags().StringVar(&f.ownerAuthFile, "tpm-owner-auth-file", "", "create, counter rebind: file holding the TPM owner password (mode 0600 or stricter); empty if absent; DEPRECATED, see --tpm-owner-auth-from")
+	cmd.Flags().StringVar(&f.authFrom, "tpm-auth-from", "", "the counter's authValue, at most 32 bytes,"+tpmFromHelp+". Without it, a NEW counter's authValue is derived from the container's master key (nothing to store); a counter made earlier with a stored authValue needs it at every mount, or run theca counter rebind once to migrate it")
 	cmd.Flags().StringVar(&f.ownerAuthFrom, "tpm-owner-auth-from", "", "create, counter rebind: the TPM owner password"+tpmFromHelp)
 	cmd.Flags().StringVar(&f.endorsementAuthFrom, "tpm-endorsement-auth-from", "", "the TPM's endorsement hierarchy password, empty if the TPM has none, needed at create, counter rebind and EVERY mount to name the TPM (its endorsement key)"+tpmFromHelp+
 		". A wrong password is refused with TPM_RC_BAD_AUTH and does NOT count toward the TPM's dictionary-attack lockout: the authValue of a hierarchy is not DA protected (TCG TPM 2.0 Part 1 rev 1.59, 19.8.1), unlike lockoutAuth")
 	cmd.Flags().BoolVar(&f.acceptRollback, "accept-rollback", false, "rebind a container older than the counter to the counter's value (loud: an old copy is accepted as current)")
-	cmd.MarkFlagsMutuallyExclusive("tpm-auth-file", "tpm-auth-from")
-	cmd.MarkFlagsMutuallyExclusive("tpm-owner-auth-file", "tpm-owner-auth-from")
-	deprecateFile(cmd, "tpm-auth-file", "tpm-auth-from")
-	deprecateFile(cmd, "tpm-owner-auth-file", "tpm-owner-auth-from")
+	prev := cmd.FlagErrorFunc()
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		for _, r := range removedTPMFlags {
+			if err.Error() == "unknown flag: --"+r.flag {
+				return errors.New(r.msg)
+			}
+		}
+		return prev(c, err)
+	})
+}
+
+// removedTPMFlags are the file flags taken out in v0.33.0 (go-theca/theca#55).
+// A script that still passes one is told what replaces it, and how a counter
+// made with a stored authValue is migrated, instead of "unknown flag".
+var removedTPMFlags = []struct{ flag, msg string }{
+	{"tpm-auth-file", "--tpm-auth-file was removed in v0.33.0 (go-theca/theca#55). A counter made by an older theca with a stored authValue is migrated once by " +
+		"`theca counter rebind FILE --counter tpm` with the factors that open the container, no --tpm-auth-* flag, and --tpm-owner-auth-from REF if the TPM has an owner password: " +
+		"it derives a new authValue from the container's master key and deletes the old counter, and nothing is stored afterwards. " +
+		"Or put the same authValue in a secret manager and give --tpm-auth-from REF"},
+	{"tpm-owner-auth-file", "--tpm-owner-auth-file was removed in v0.33.0 (go-theca/theca#55): use --tpm-owner-auth-from REF " +
+		"(keychain:, secretservice: or keepassxc:); a TPM whose owner password is empty needs no flag"},
 }
 
 // explicitAuth reports whether the counter's authValue is given by the user
-// (a file or a manager) rather than derived from the container's master key.
-func (f *tpmFlags) explicitAuth() bool { return f.authFile != "" || f.authFrom != "" }
+// (a secret manager) rather than derived from the container's master key.
+func (f *tpmFlags) explicitAuth() bool { return f.authFrom != "" }
 
 // readManager reads a secret that must come from a secret manager: a file:
 // reference is refused (the flag exists so that no password file does).
@@ -118,23 +132,13 @@ func (f *tpmFlags) options(ctx context.Context, owner bool) (nvcounter.Options, 
 	o := nvcounter.Options{Device: f.device, Handle: f.handle}
 	wipe := func() { clear(o.Auth); clear(o.OwnerAuth); clear(o.EndorsementAuth) }
 	var err error
-	switch {
-	case f.authFrom != "":
-		o.Auth, err = readManager(ctx, "tpm-auth-from", f.authFrom)
-	case f.authFile != "":
-		o.Auth, err = readSecretFile(f.authFile)
-	}
-	if err != nil {
-		return o, wipe, err
-	}
-	if owner {
-		switch {
-		case f.ownerAuthFrom != "":
-			o.OwnerAuth, err = readManager(ctx, "tpm-owner-auth-from", f.ownerAuthFrom)
-		case f.ownerAuthFile != "":
-			o.OwnerAuth, err = readSecretFile(f.ownerAuthFile)
+	if f.authFrom != "" {
+		if o.Auth, err = readManager(ctx, "tpm-auth-from", f.authFrom); err != nil {
+			return o, wipe, err
 		}
-		if err != nil {
+	}
+	if owner && f.ownerAuthFrom != "" {
+		if o.OwnerAuth, err = readManager(ctx, "tpm-owner-auth-from", f.ownerAuthFrom); err != nil {
 			return o, wipe, err
 		}
 	}
@@ -183,7 +187,7 @@ func (f *tpmFlags) openOptions(ctx context.Context) (theca.OpenOptions, func(), 
 // newCounter creates the counter for a new container, or returns nil when none
 // was asked for. undo deletes it again if the container cannot be made.
 //
-// With --tpm-auth-file or --tpm-auth-from the counter is made now, with that
+// With --tpm-auth-from the counter is made now, with that
 // authValue (ctr). Without, the counter's authValue is derived from the
 // container's master key, which does not exist yet: mk makes the counter once
 // theca.Create has it (DESIGN 5.4.2).
@@ -265,13 +269,31 @@ func authLine(i theca.Info) string {
 	if i.CounterDerivedAuth {
 		return "counter authValue: derived from the container's master key (whoever unlocks the container can use the counter; nothing to store)"
 	}
-	return "counter authValue: given with --tpm-auth-from / --tpm-auth-file (or empty): give the same one to every command; `theca counter rebind` without them migrates to a derived one"
+	return "counter authValue: given with --tpm-auth-from (or empty): give the same one to every command; `theca counter rebind` without them migrates to a derived one"
 }
 
 // identityRecovery names the way out of a refusal on identity.
 const identityRecovery = "if this is a different TPM on purpose (the machine or the TPM was replaced, the TPM's endorsement seed was changed), " +
 	"`theca counter rebind FILE --counter tpm` (with the owner password and the factors that open the container) binds it to a new counter on this TPM and pins this TPM; " +
 	"rollback protection then restarts from that moment. If you did not replace the TPM, do NOT rebind: something other than your TPM is answering"
+
+// legacyAuth names the way out for a counter made by a theca older than
+// v0.33.0 with an authValue stored in a file (--tpm-auth-file, removed): it
+// needs neither the file nor the old value.
+const legacyAuth = "A counter made by an older theca with a stored authValue: " +
+	"`theca counter rebind FILE --counter tpm` (with the factors that open the container, no --tpm-auth-* flag, " +
+	"and --tpm-owner-auth-from REF if the TPM has an owner password) derives a new authValue from the container's master key, " +
+	"binds the container to a new counter and deletes the old one; nothing is stored afterwards. " +
+	"Or, if the old value is in a secret manager, give --tpm-auth-from REF"
+
+// isAuthRefusal reports whether err is the TPM refusing an authValue
+// (TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL, in their format-one forms).
+func isAuthRefusal(err error) bool {
+	te := &tpm2.TPMError{} // stays as it is, RC 0, when err holds no TPM error
+	errors.As(err, &te)
+	n := te.RC & 0x3F
+	return te.RC&0x80 != 0 && (n == 0x22 || n == 0x0E)
+}
 
 // hint turns the library's counter refusals into ones that name the flag or
 // the recovery.
@@ -280,6 +302,8 @@ func (f *tpmFlags) hint(err error) error {
 	case errors.Is(err, nvcounter.ErrEndorsementAuth):
 		return fmt.Errorf("%w: this TPM has an endorsement hierarchy password: give --tpm-endorsement-auth-from REF with the right one "+
 			"(a wrong password does not count toward the TPM's dictionary-attack lockout, TCG Part 1 rev 1.59, 19.8.1)", err)
+	case isAuthRefusal(err):
+		return fmt.Errorf("%w: the TPM refused the counter's authValue. %s", err, legacyAuth)
 	case errors.Is(err, theca.ErrCounterIdentity):
 		return fmt.Errorf("%w: %s", err, identityRecovery)
 	case errors.Is(err, theca.ErrCounterRequired):
@@ -310,11 +334,11 @@ func rebindCmd() *cobra.Command {
 		Long: "Bind the container to a new TPM counter, when the old one was deleted (the NV\n" +
 			"index undefined, the TPM cleared or replaced) or when you want another.\n" +
 			"It needs the factors that open the container and the TPM owner password\n" +
-			"(--tpm-owner-auth-from, or the deprecated --tpm-owner-auth-file) and, on a TPM\n" +
+			"(--tpm-owner-auth-from, if it has one) and, on a TPM\n" +
 			"with an endorsement password, --tpm-endorsement-auth-from. The new counter is\n" +
 			"made at the handle the container records when that handle is free, otherwise\n" +
 			"at the first free one.\n\n" +
-			"Without --tpm-auth-from / --tpm-auth-file the new counter's authValue is\n" +
+			"Without --tpm-auth-from the new counter's authValue is\n" +
 			"DERIVED from the container's master key: nothing to store, and a container\n" +
 			"whose counter had a stored authValue is migrated by rebinding without them.\n\n" +
 			"Rollback protection restarts from now: nothing is checked against the old\n" +
@@ -349,7 +373,7 @@ func rebindCmd() *cobra.Command {
 			var made tpmCounter
 			removed := false
 			// rebindAt makes the new counter; auth is the derived authValue, nil
-			// when the user gave one (--tpm-auth-file/-from, already in o).
+			// when the user gave one (--tpm-auth-from, already in o).
 			rebindAt := func(h uint32, auth []byte) (theca.Counter, error) {
 				base := o
 				if auth != nil {
