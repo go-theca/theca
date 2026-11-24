@@ -289,12 +289,10 @@ const legacyAuth = "A counter made by an older theca with a stored authValue: " 
 // isAuthRefusal reports whether err is the TPM refusing an authValue
 // (TPM_RC_BAD_AUTH or TPM_RC_AUTH_FAIL, in their format-one forms).
 func isAuthRefusal(err error) bool {
-	var te *tpm2.TPMError
-	if !errors.As(err, &te) || te.RC&0x80 == 0 {
-		return false
-	}
+	te := &tpm2.TPMError{} // stays as it is, RC 0, when err holds no TPM error
+	errors.As(err, &te)
 	n := te.RC & 0x3F
-	return n == 0x22 || n == 0x0E
+	return te.RC&0x80 != 0 && (n == 0x22 || n == 0x0E)
 }
 
 // hint turns the library's counter refusals into ones that name the flag or
