@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -557,6 +558,21 @@ func TestRemovedTPMFileFlags(t *testing.T) {
 // A TPM that refuses the counter's authValue gets the migration sentence; a
 // refusal that is not an authValue one does not.
 func TestAuthRefusalHint(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want bool
+	}{
+		{errors.New("not a TPM error"), false},
+		{nil, false},
+		{fmt.Errorf("wrapped: %w", &tpm2.TPMError{RC: 0x9A2}), true},
+		{&tpm2.TPMError{RC: 0x08E}, true},
+		{&tpm2.TPMError{RC: 0x022}, false},
+		{&tpm2.TPMError{RC: 0x084}, false},
+	} {
+		if got := isAuthRefusal(c.err); got != c.want {
+			t.Errorf("isAuthRefusal(%v) = %v", c.err, got)
+		}
+	}
 	f := installFakeTPM(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
