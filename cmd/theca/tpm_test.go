@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-theca/theca"
 	"github.com/go-tpm2/nvcounter"
+	"github.com/go-tpm2/tpm2"
 )
 
 // fakeCounter is a TPM NV counter in memory. Its Name changes once, at the
@@ -120,11 +121,11 @@ func TestCounterTPMLifecycle(t *testing.T) {
 	f := installFakeTPM(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
-	auth := secretFile(t, dir, "auth", "index secret\n", 0o600)
-	owner := secretFile(t, dir, "owner", "owner secret\n", 0o600)
+	manager(t, map[string]string{"keychain:t/ix": "index secret", "keychain:t/owner": "owner secret"})
+	const auth = "keychain:t/ix"
 	path := filepath.Join(dir, "c.theca")
 	r := run(nil, "create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm",
-		"--tpm-handle", "0x01500042", "--tpm-auth-file", auth, "--tpm-owner-auth-file", owner, "--tpm-device", "unix:/x")
+		"--tpm-handle", "0x01500042", "--tpm-auth-from", auth, "--tpm-owner-auth-from", "keychain:t/owner", "--tpm-device", "unix:/x")
 	if r.e != nil || !strings.Contains(r.err, "rollback counter: TPM NV index 0x01500042") || strings.Contains(r.err, "no rollback counter") {
 		t.Fatalf("create: %v %q", r.e, r.err)
 	}
@@ -142,7 +143,7 @@ func TestCounterTPMLifecycle(t *testing.T) {
 		t.Fatalf("info without the flag: %v", r.e)
 	}
 	// With it: protected, and one mount moved the counter once.
-	r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", auth)
+	r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", auth)
 	if r.e != nil || !strings.Contains(r.out, "rollback protected: true (TPM NV counter 0x01500042") || strings.Contains(r.err, "no rollback counter") {
 		t.Fatalf("info: %v %q %q", r.e, r.out, r.err)
 	}
@@ -154,7 +155,7 @@ func TestCounterTPMLifecycle(t *testing.T) {
 	}
 	// Every open command takes it.
 	for _, args := range [][]string{{"verify"}, {"export"}, {"slots", "list"}} {
-		a := append(append([]string{}, args...), path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", auth)
+		a := append(append([]string{}, args...), path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", auth)
 		if r := run(nil, a...); r.e != nil {
 			t.Fatalf("%v: %v %s", args, r.e, r.err)
 		}
@@ -165,17 +166,17 @@ func TestCounterTPMLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := run(nil, "verify", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", auth); r.e != nil {
+	if r := run(nil, "verify", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", auth); r.e != nil {
 		t.Fatal(r.e)
 	}
 	if err := os.WriteFile(path, older, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", auth)
+	r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", auth)
 	if !errors.Is(r.e, theca.ErrRollback) {
 		t.Fatalf("rolled-back copy: %v", r.e)
 	}
-	r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", auth, "--accept-rollback")
+	r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", auth, "--accept-rollback")
 	if r.e != nil || !strings.Contains(r.err, "warning: --accept-rollback") {
 		t.Fatalf("accept-rollback: %v %q", r.e, r.err)
 	}
@@ -185,6 +186,7 @@ func TestCounterTPMErrors(t *testing.T) {
 	f := installFakeTPM(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	manager(t, nil)
 	path := filepath.Join(dir, "c.theca")
 	create := func(extra ...string) result {
 		return run(nil, append([]string{"create", path, "--size", "1M", "--password-file", pw}, extra...)...)
@@ -195,9 +197,9 @@ func TestCounterTPMErrors(t *testing.T) {
 		want  string
 	}{
 		{"unknown counter", []string{"--counter", "sgx"}, "want tpm"},
-		{"missing auth file", []string{"--counter", "tpm", "--tpm-auth-file", filepath.Join(dir, "none")}, "no such file"},
-		{"missing owner file", []string{"--counter", "tpm", "--tpm-owner-auth-file", filepath.Join(dir, "none")}, "no such file"},
-		{"loose auth file", []string{"--counter", "tpm", "--tpm-auth-file", secretFile(t, dir, "loose", "x", 0o644)}, "must not be readable"},
+		{"missing auth entry", []string{"--counter", "tpm", "--tpm-auth-from", "keychain:t/none"}, "no such entry"},
+		{"missing owner entry", []string{"--counter", "tpm", "--tpm-owner-auth-from", "keychain:t/none"}, "no such entry"},
+		{"auth file reference", []string{"--counter", "tpm", "--tpm-auth-from", "file:" + pw}, "a file: reference is refused"},
 	} {
 		if r := create(c.extra...); r.e == nil || !strings.Contains(r.e.Error(), c.want) {
 			t.Fatalf("%s: %v", c.name, r.e)
@@ -228,8 +230,8 @@ func TestCounterTPMErrors(t *testing.T) {
 	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm"); !errors.Is(r.e, nvcounter.ErrNotCounter) {
 		t.Fatalf("open: %v", r.e)
 	}
-	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-file", filepath.Join(dir, "none")); r.e == nil {
-		t.Fatal("an unreadable authValue file was accepted")
+	if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", "keychain:t/none"); r.e == nil {
+		t.Fatal("an unreadable authValue was accepted")
 	}
 	if r := run(nil, "info", path, "--password-file", pw, "--counter", "sgx"); r.e == nil {
 		t.Fatal("an unknown counter was accepted")
@@ -241,7 +243,7 @@ func TestCounterRebind(t *testing.T) {
 	f := installFakeTPM(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
-	owner := secretFile(t, dir, "owner", "owner secret\n", 0o600)
+	manager(t, map[string]string{"keychain:t/owner": "owner secret"})
 	path := filepath.Join(dir, "c.theca")
 	if r := run(nil, "create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm", "--tpm-handle", "0x01500042"); r.e != nil {
 		t.Fatal(r.e)
@@ -277,7 +279,7 @@ func TestCounterRebind(t *testing.T) {
 	// Rebind: at the recorded handle when it is free.
 	f.created = nil
 	rb := func(extra ...string) result {
-		return run(nil, append([]string{"counter", "rebind", path, "--password-file", pw, "--counter", "tpm", "--tpm-owner-auth-file", owner}, extra...)...)
+		return run(nil, append([]string{"counter", "rebind", path, "--password-file", pw, "--counter", "tpm", "--tpm-owner-auth-from", "keychain:t/owner"}, extra...)...)
 	}
 	f.failHandle = 0
 	r := rb()
@@ -343,8 +345,8 @@ func TestCounterRebind(t *testing.T) {
 	if r := run(nil, "counter", "rebind", path, "--password-file", pw, "--counter", "sgx"); r.e == nil {
 		t.Fatal("unknown counter")
 	}
-	if r := rb("--tpm-owner-auth-file", filepath.Join(dir, "none")); r.e == nil {
-		t.Fatal("missing owner file")
+	if r := rb("--tpm-owner-auth-from", "keychain:t/none"); r.e == nil {
+		t.Fatal("missing owner entry")
 	}
 	if r := run(nil, "counter", "rebind", filepath.Join(dir, "none.theca"), "--password-file", pw, "--counter", "tpm"); r.e == nil {
 		t.Fatal("missing container")
@@ -474,9 +476,9 @@ func TestCounterTPMSwtpm(t *testing.T) {
 	dev := startSwtpmDevice(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
-	auth := secretFile(t, dir, "auth", "index secret\n", 0o600)
+	manager(t, map[string]string{"keychain:t/ix": "index secret"})
 	path := filepath.Join(dir, "c.theca")
-	flags := []string{"--counter", "tpm", "--tpm-device", dev, "--tpm-auth-file", auth}
+	flags := []string{"--counter", "tpm", "--tpm-device", dev, "--tpm-auth-from", "keychain:t/ix"}
 	r := run(nil, append([]string{"create", path, "--size", "1M", "--password-file", pw}, flags...)...)
 	if r.e != nil || !strings.Contains(r.err, "TPM NV index 0x01500000") {
 		t.Fatalf("create: %v %q", r.e, r.err)
@@ -495,5 +497,85 @@ func TestCounterTPMSwtpm(t *testing.T) {
 	r = run(nil, append([]string{"info", path, "--password-file", pw}, flags...)...)
 	if !errors.Is(r.e, theca.ErrRollback) {
 		t.Fatalf("rolled-back copy on a real TPM: %v", r.e)
+	}
+}
+
+// A counter with a STORED authValue, as an older theca made it (the value was
+// in a file; --tpm-auth-file is gone), on a software TPM. After the upgrade the
+// open is refused by the TPM, the error names the migration, the migration
+// works with no flag that names the old value, and nothing is needed after it.
+func TestLegacyStoredAuthCounterMigrates(t *testing.T) {
+	dev := startSwtpmDevice(t)
+	dir := t.TempDir()
+	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	manager(t, map[string]string{"keychain:t/ix": "index secret"})
+	path := filepath.Join(dir, "legacy.theca")
+	base := []string{"--password-file", pw, "--counter", "tpm", "--tpm-device", dev}
+	if r := run(nil, append([]string{"create", path, "--size", "1M", "--tpm-auth-from", "keychain:t/ix"}, base...)...); r.e != nil {
+		t.Fatalf("create: %v %q", r.e, r.err)
+	}
+	// After the upgrade: no authValue is given, the TPM refuses, the error says what works.
+	r := run(nil, append([]string{"info", path}, base...)...)
+	if r.e == nil || !strings.Contains(r.e.Error(), "the TPM refused the counter's authValue") ||
+		!strings.Contains(r.e.Error(), "`theca counter rebind FILE --counter tpm`") || !strings.Contains(r.e.Error(), "--tpm-auth-from REF") {
+		t.Fatalf("legacy open: %v", r.e)
+	}
+	// The migration needs neither the old value nor a file.
+	if r = run(nil, append([]string{"counter", "rebind", path}, base...)...); r.e != nil || !strings.Contains(r.err, "derived from the container's master key") {
+		t.Fatalf("migrate: %v %q", r.e, r.err)
+	}
+	if r = run(nil, append([]string{"info", path}, base...)...); r.e != nil || !strings.Contains(r.out, "counter authValue: derived") {
+		t.Fatalf("after the migration: %v %q %q", r.e, r.out, r.err)
+	}
+}
+
+// The removed flags are refused with the way forward, not "unknown flag".
+func TestRemovedTPMFileFlags(t *testing.T) {
+	dir := t.TempDir()
+	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	for _, c := range []struct{ flag, want string }{
+		{"--tpm-auth-file", "`theca counter rebind FILE --counter tpm`"},
+		{"--tpm-owner-auth-file", "use --tpm-owner-auth-from REF"},
+	} {
+		for _, args := range [][]string{
+			{"info", filepath.Join(dir, "c.theca"), "--password-file", pw, c.flag, pw},
+			{"create", filepath.Join(dir, "c.theca"), "--password-file", pw, c.flag + "=" + pw},
+			{"counter", "rebind", filepath.Join(dir, "c.theca"), "--password-file", pw, c.flag, pw},
+		} {
+			r := run(nil, args...)
+			if r.e == nil || !strings.Contains(r.e.Error(), c.flag+" was removed in v0.33.0") || !strings.Contains(r.e.Error(), c.want) {
+				t.Errorf("%v: %v", args, r.e)
+			}
+		}
+	}
+	// Another unknown flag is still the ordinary error.
+	if r := run(nil, "info", filepath.Join(dir, "c.theca"), "--no-such-flag"); r.e == nil || !strings.Contains(r.e.Error(), "unknown flag: --no-such-flag") {
+		t.Errorf("other flag: %v", r.e)
+	}
+}
+
+// A TPM that refuses the counter's authValue gets the migration sentence; a
+// refusal that is not an authValue one does not.
+func TestAuthRefusalHint(t *testing.T) {
+	f := installFakeTPM(t)
+	dir := t.TempDir()
+	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
+	path := filepath.Join(dir, "c.theca")
+	if r := run(nil, "create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm"); r.e != nil {
+		t.Fatal(r.e)
+	}
+	for _, rc := range []uint32{0x9A2, 0x08E} { // TPM_RC_BAD_AUTH, TPM_RC_AUTH_FAIL, with the format-one bit
+		f.openErr = &tpm2.TPMError{CC: 0x14E, RC: rc}
+		r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm")
+		var te *tpm2.TPMError
+		if !errors.As(r.e, &te) || !strings.Contains(r.e.Error(), "counter rebind FILE --counter tpm") || !strings.Contains(r.e.Error(), "--tpm-auth-from REF") {
+			t.Errorf("rc %#x: %v", rc, r.e)
+		}
+	}
+	for _, rc := range []uint32{0x9A2 &^ 0x80, 0x084} { // format zero; another format-one code
+		f.openErr = &tpm2.TPMError{CC: 0x14E, RC: rc}
+		if r := run(nil, "info", path, "--password-file", pw, "--counter", "tpm"); r.e == nil || strings.Contains(r.e.Error(), "counter rebind") {
+			t.Errorf("rc %#x: %v", rc, r.e)
+		}
 	}
 }

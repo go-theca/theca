@@ -17,7 +17,7 @@ import (
 
 // The secret-manager flags of the counter reach the TPM; the counter's
 // authValue is derived from the container unless the user gives one; a file:
-// reference is refused for the new flags.
+// reference is refused for the manager-only flags.
 func TestTPMManagerFlagsAndDerivedAuth(t *testing.T) {
 	f := installFakeTPM(t)
 	manager(t, map[string]string{
@@ -75,8 +75,7 @@ func TestTPMManagerFlagsAndDerivedAuth(t *testing.T) {
 		t.Fatalf("rebind: %v %+v", r.e, f.created[n:])
 	}
 
-	// A file: reference is refused for each new flag, a bad one is named, and
-	// the deprecated file flags exclude their -from twin.
+	// A file: reference is refused for each new flag, and a bad one is named.
 	for _, flag := range []string{"--tpm-endorsement-auth-from", "--tpm-owner-auth-from"} {
 		r = run(nil, "create", filepath.Join(dir, "e.theca"), "--size", "1M", "--password-file", pw, "--counter", "tpm", flag, "file:"+pw)
 		if r.e == nil || !strings.Contains(r.e.Error(), "a file: reference is refused") || !strings.Contains(r.e.Error(), flag[2:]) {
@@ -99,12 +98,6 @@ func TestTPMManagerFlagsAndDerivedAuth(t *testing.T) {
 	// the only thing it can fail on, and it must.
 	if r = run(nil, "info", path, "--password-file", pw, "--counter", "tpm", "--tpm-auth-from", "keychain:t/missing"); r.e == nil || !strings.Contains(r.e.Error(), "no such entry") {
 		t.Errorf("mount with a missing --tpm-auth-from: %v", r.e)
-	}
-	for _, pair := range [][2]string{{"--tpm-auth-file", "--tpm-auth-from"}, {"--tpm-owner-auth-file", "--tpm-owner-auth-from"}} {
-		r = run(nil, "create", filepath.Join(dir, "e.theca"), "--size", "1M", "--password-file", pw, "--counter", "tpm", pair[0], pw, pair[1], "keychain:t/ix")
-		if r.e == nil || !strings.Contains(r.e.Error(), "none of the others can be") {
-			t.Errorf("%v: %v", pair, r.e)
-		}
 	}
 	// A refusal made nothing.
 	if _, err := nvcounter.Open(nvcounter.Options{Device: filepath.Join(dir, "none"), Handle: 1}); err == nil {

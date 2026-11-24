@@ -96,14 +96,13 @@ func TestJournalResizeWithCounter(t *testing.T) {
 	f := installFakeTPM(t)
 	dir := t.TempDir()
 	pw := secretFile(t, dir, "pw", "correct horse\n", 0o600)
-	auth := secretFile(t, dir, "auth", "index secret\n", 0o600)
-	owner := secretFile(t, dir, "owner", "owner secret\n", 0o600)
+	manager(t, map[string]string{"keychain:t/ix": "index secret", "keychain:t/owner": "owner secret"})
 	path := filepath.Join(dir, "c.theca")
 	if r := run(nil, "create", path, "--size", "1M", "--password-file", pw, "--counter", "tpm",
-		"--tpm-handle", "0x01500042", "--tpm-auth-file", auth, "--tpm-owner-auth-file", owner); r.e != nil {
+		"--tpm-handle", "0x01500042", "--tpm-auth-from", "keychain:t/ix", "--tpm-owner-auth-from", "keychain:t/owner"); r.e != nil {
 		t.Fatal(r.e, r.err)
 	}
-	flags := []string{"--password-file", pw, "--counter", "tpm", "--tpm-auth-file", auth}
+	flags := []string{"--password-file", pw, "--counter", "tpm", "--tpm-auth-from", "keychain:t/ix"}
 	out := filepath.Join(dir, "new.theca")
 
 	// Without the counter flag the refusal names it, and no NEW is left.

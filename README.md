@@ -97,8 +97,10 @@ theca export vault.theca --password-from keychain:theca/vault > disk.img
 
 - **Secrets never go in arguments or environment variables.** The password is
   read from the terminal with echo off, or from a secret manager (next item).
-- **Secret files are deprecated (v0.21.0).** `--password-file`, `--recovery-file`,
-  `--pin-file`, `--tpm-auth-file` and `--tpm-owner-auth-file` still work (a regular
+- **Secret files are deprecated (v0.21.0).** `--tpm-auth-file` and
+  `--tpm-owner-auth-file` were **removed in v0.33.0** (breaking): see the counter
+  section below for the migration. `--password-file`, `--recovery-file` and
+  `--pin-file` still work (a regular
   file, mode `0600` or stricter) but are hidden from the help, and each use prints
   a warning on standard error that names the `--X-from` replacement. So does a
   `file:` reference in `--password-from`, `--recovery-from` and `--pin-from`.
@@ -414,16 +416,24 @@ theca counter rebind vault.theca --counter tpm --tpm-owner-auth-from keychain:tp
   master key: whoever unlocks the container (password plus security key) can
   use its counter, nobody else, and **there is nothing to store**. The header
   records it, so a mount needs only `--counter tpm`. A counter made by an older
-  theca keeps its stored authValue (`--tpm-auth-from REF`, or the deprecated
-  `--tpm-auth-file`, at every mount); `theca counter rebind` without those flags
-  moves it to a derived one.
+  theca keeps its stored authValue (`--tpm-auth-from REF` at every mount);
+  `theca counter rebind` without that flag moves it to a derived one.
+  **Upgrading to v0.33.0 (breaking): `--tpm-auth-file` is gone.** A container whose
+  counter has an authValue stored in a file is refused by the TPM ("the TPM
+  refused the counter's authValue"), and the message names the migration. Run
+  `theca counter rebind FILE --counter tpm` once, with the factors that open the
+  container, no `--tpm-auth-*` flag, and `--tpm-owner-auth-from REF` if the TPM
+  has an owner password: it needs neither the old file nor the old value, derives
+  a new authValue, binds the container to a new counter and deletes the old one
+  (rollback protection restarts from that moment). Or put the old value in a
+  secret manager and give `--tpm-auth-from REF`.
 - **TPM passwords come from a secret manager.** `--tpm-owner-auth-from REF`
   (`create`, `counter rebind`) and `--tpm-endorsement-auth-from REF` (`create`,
   `counter rebind` and **every mount**, only on a TPM whose endorsement
   hierarchy has a password) take `keychain:`, `secretservice:` or `keepassxc:`
   references; a `file:` reference is refused (`--tpm-auth-from` too, since
-  v0.21.0). `--tpm-owner-auth-file` and
-  `--tpm-auth-file` still work (0600 or stricter) and are deprecated. Never
+  v0.21.0). `--tpm-owner-auth-file` was removed in v0.33.0 (an empty owner
+  password needs no flag; otherwise use `--tpm-owner-auth-from`). Never
   arguments or environment variables. Without `--tpm-endorsement-auth-from` on
   such a TPM a pinned container is refused, and the message names the flag. A
   wrong endorsement password does **not** count toward the TPM's
